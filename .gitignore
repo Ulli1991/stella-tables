@@ -1,0 +1,10 @@
+# build outputs (reproduced by build.sh)
+build/
+*.hdf5
+!stellar/data/lut/spectral_band_lut.hdf5
+chemistry/out/
+# full raw catalogues (see fetch/; only the reduced tarballs are versioned)
+raw/
+__pycache__/
+*.pyc
+*.x
