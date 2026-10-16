@@ -22,7 +22,8 @@ included), and installs the outputs only if every suite passes; otherwise it doe
 make STELLA_TABLES_REPO=<git URL> [STELLA_TABLES_REF=<tag or commit>] [STELLA_TABLES_DIR=<clone dir>]
 ```
 
-(or the same names as environment variables). Without `STELLA_TABLES_REPO` it uses `$HOME/stella-tables` if present.
+(or the same names as environment variables). By default it clones https://github.com/Ulli1991/stella-tables at the
+commit pinned in GIZMO's `scripts/get_stella_tables.sh`, so each GIZMO version builds the tables it was tested with.
 
 ## Outputs (`build/`)
 
