@@ -52,8 +52,8 @@ tests/run_all.py              runs every suite below
 
 ## Reduced track catalogues
 
-The full MIST / PARSEC v2 / PARSEC v1.2 / BoOST downloads are about 24 GB; the builder reads 1170 files
-(4.8 GB). `stellar/reduce_tracks.py` keeps only those files, and in the MIST `.track.eep` and PARSEC v2 `.TAB`
+The full MIST / PARSEC v2 / PARSEC v1.2 / BoOST downloads are about 24 GB; the builder reads 1816 files
+`stellar/reduce_tracks.py` keeps only those files, and in the MIST `.track.eep` and PARSEC v2 `.TAB`
 tracks only the columns whose names appear in `build_stellar_tables.py`, as the original text, so the builder
 parses identical numbers. Files the builder only discovers by name become empty files. Building from the reduced
 catalogues gives tables identical to building from the full downloads (checked per dataset; see
@@ -107,4 +107,4 @@ Expected failures (XFAIL) are listed in the test output with their reason and do
 * MIST v1.2's own tracks have a ~4% lifetime uptick at one mass step near 1.9 Msun ([Fe/H] = -0.5, -0.25),
   which the table reproduces (XFAIL in `test_table_physics.py`).
 * Above the catalogue metallicity ranges (PARSEC v2 Z > 0.03, MIST Z > 0.0425) tracks are held at the edge.
-* Source URLs for the PARSEC v2, PARSEC v1.2 and BoOST downloads are not recorded yet (`fetch/README.md`).
+* The BoOST download location is not confirmed (`fetch/README.md`); no BoOST track enters the current build.
