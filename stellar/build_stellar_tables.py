@@ -240,6 +240,7 @@ PARSEC2_Z_GRID = [1e-11, 1e-6, 0.0001, 0.001, 0.002, 0.004, 0.006, 0.008,
 
 # Stitch: PARSEC v2 primary (M >= 2), MIST fallback (M < 2 or gaps), BoOST/PARSEC v1 last resort
 MASS_STITCH_P2_LO = 2.0       # PARSEC v2 primary above this (its min mass)
+MASS_STITCH_P2_FULL = 2.5     # MIST -> PARSEC v2 blend (linear in log M) over [P2_LO, P2_FULL]
 # Legacy BoOST stitch (fallback only)
 MASS_STITCH_BOOST_LO = 40.0   # BoOST fallback lower limit
 MASS_STITCH_BOOST_HI = 80.0   # BoOST fallback upper limit
@@ -1351,8 +1352,7 @@ def _interpolate_two_tracks_tau(t_lo, t_hi, f, log_age_grid, M_target=None):
     f: interpolation weight (0 = t_lo, 1 = t_hi) in log-mass space.
     M_target: target initial mass (Msun) — used to convert M_frac back to M_current.
     """
-    N_TAU = 1024  # fine tau grid for interpolation
-    tau_grid = np.linspace(0.0, 1.0, N_TAU)
+    tau_grid = TAU_GRID
 
     r_lo = _resample_track_onto_tau_grid(t_lo, tau_grid)
     r_hi = _resample_track_onto_tau_grid(t_hi, tau_grid)
@@ -1364,7 +1364,14 @@ def _interpolate_two_tracks_tau(t_lo, t_hi, f, log_age_grid, M_target=None):
     if r_hi is None:
         return resample_onto_age_grid(t_lo, log_age_grid)
 
-    # --- Interpolate all quantities at each tau point ---
+    return _tau_to_age(_blend_tau(r_lo, r_hi, f, M_target), tau_grid, log_age_grid)
+
+
+TAU_GRID = np.linspace(0.0, 1.0, 1024)  # fine fractional-lifetime grid for track interpolation
+
+
+def _blend_tau(r_lo, r_hi, f, M_target=None):
+    """Mix two tracks on the tau grid (f = 0 -> r_lo, 1 -> r_hi); result can be blended again or mapped to age."""
     interp = {}
 
     # Log-scale quantities (structural + radiation)
@@ -1433,10 +1440,16 @@ def _interpolate_two_tracks_tau(t_lo, t_hi, f, log_age_grid, M_target=None):
             pt_tau = np.exp(np.log(v_lo) + f * (np.log(v_hi) - np.log(v_lo)))
         else:
             pt_tau = v_lo + f * (v_hi - v_lo)
-        # Convert from fractional to physical age
-        pt[key] = pt_tau * lifetime
+        pt[key] = pt_tau
     interp['phase_transitions'] = pt
 
+    return interp
+
+
+def _tau_to_age(interp, tau_grid, log_age_grid):
+    """Map a tau-grid track back to physical age and resample onto log_age_grid."""
+    lifetime = interp['lifetime']
+    interp = dict(interp, phase_transitions={k: v * lifetime for k, v in interp['phase_transitions'].items()})
     # --- Map from tau-space back to physical age ---
     # Convert tau grid to physical age: age = tau * lifetime
     age_phys = tau_grid * lifetime
@@ -1664,6 +1677,45 @@ def interpolate_mist_to_mass(mist_index, feh_str, M_target, log_age_grid):
     return _interpolate_to_mass(
         mist_track_to_common, mist_index, feh_str, M_target,
         0.0, log_age_grid)
+
+
+def _tau_rep_at_mass(track_loader, index, key, M_target, M_min):
+    """Track at M_target on TAU_GRID (mass interpolation in log M); None outside the catalogue's mass range."""
+    avail = sorted(m for (k, m) in index if k == key and m >= M_min)
+    if not avail or M_target < avail[0] or M_target > avail[-1]:
+        return None
+    k = min(max(np.searchsorted(avail, M_target) - 1, 0), len(avail) - 2) if len(avail) > 1 else 0
+    def first_valid(masses):  # skip tracks the loader rejects (truncated catalogue models)
+        for m in masses:
+            t = track_loader(index[(key, m)])
+            r = _resample_track_onto_tau_grid(t, TAU_GRID) if t is not None else None
+            if r is not None:
+                return m, r
+        return None, None
+    M_lo, r_lo = first_valid(avail[k::-1])
+    M_hi, r_hi = first_valid(avail[k + 1:] if len(avail) > 1 else avail)
+    if r_lo is None or r_hi is None or not (M_lo <= M_target <= M_hi):
+        return None
+    f = 0.0 if M_hi == M_lo else (np.log10(M_target) - np.log10(M_lo)) / (np.log10(M_hi) - np.log10(M_lo))
+    return _blend_tau(r_lo, r_hi, f, M_target)
+
+
+def _tau_rep_at_Z_mass(track_loader, index, z_keys, Z, M_target, M_min):
+    """Track at (Z, M_target): log-Z interpolation between the bracketing catalogue metallicities
+    (z_keys = [(Z_value, key)], clamped at the grid edges)."""
+    z_keys = sorted(z_keys); lz = [np.log10(max(z, 1e-12)) for z, _ in z_keys]; x = np.log10(max(Z, 1e-12))
+    if x <= lz[0] or x >= lz[-1]:
+        return _tau_rep_at_mass(track_loader, index, z_keys[0 if x <= lz[0] else -1][1], M_target, M_min)
+    k = int(np.searchsorted(lz, x)) - 1
+    r_lo = _tau_rep_at_mass(track_loader, index, z_keys[k][1], M_target, M_min)
+    r_hi = _tau_rep_at_mass(track_loader, index, z_keys[k + 1][1], M_target, M_min)
+    if r_lo is None or r_hi is None:
+        if (r_lo is None) != (r_hi is None): Z_INTERP_ONE_SIDED.append((Z, M_target, z_keys[k][1] if r_lo is None else z_keys[k + 1][1]))
+        return r_lo if r_hi is None else r_hi
+    return _blend_tau(r_lo, r_hi, (x - lz[k]) / (lz[k + 1] - lz[k]), M_target)
+
+
+Z_INTERP_ONE_SIDED = []  # (Z, M, missing catalogue key): bracketing track absent, other side used
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2783,6 +2835,12 @@ def build_all(base_dir, output_file):
                   't_AGB_start', 't_AGB_end', 't_postAGB_start', 't_WR_start']
     phase_trans = {k: np.zeros((N_Z, N_M)) for k in TRANS_KEYS}
 
+    # catalogue metallicities for log-Z interpolation
+    mist_zkeys = [(MIST_Z_GRID[k], k) for k in MIST_FEH_GRID if any(key == k for key, _ in mist_index)]
+    p2_zkeys = sorted({(z, find_parsec2_Z_str_for_Z(z)) for z in PARSEC2_Z_GRID if any(key == find_parsec2_Z_str_for_Z(z) for key, _ in p2_index)})
+    print(f"  log-Z interpolation: MIST {len(mist_zkeys)} [Fe/H] grids, PARSEC v2 {len(p2_zkeys)} Z grids; "
+          f"MIST->PARSEC v2 blend {MASS_STITCH_P2_LO}-{MASS_STITCH_P2_FULL} Msun")
+
     # ── Fill evolution grid ──
     # Priority: PARSEC v2 (M >= 2) → MIST → BoOST → PARSEC v1
     n_total = N_Z * N_M
@@ -2802,13 +2860,26 @@ def build_all(base_dir, output_file):
             result = None
             src = 0  # default: PARSEC v1
 
-            # 1) PARSEC v2: primary for M >= 2 Msun
-            if M >= MASS_STITCH_P2_LO and p2_zstr is not None:
+            # 1) MIST (M < P2_LO) and PARSEC v2 (M >= P2_LO), each interpolated in log Z; blended over [P2_LO, P2_FULL]
+            w_p2 = 0.0 if M < MASS_STITCH_P2_LO else min(1.0, np.log10(M / MASS_STITCH_P2_LO) / np.log10(MASS_STITCH_P2_FULL / MASS_STITCH_P2_LO))
+            rep_p2 = _tau_rep_at_Z_mass(parsec2_vms_track_to_common, p2_index, p2_zkeys, Z, M, MASS_STITCH_P2_LO) if w_p2 > 0 else None
+            rep_mist = _tau_rep_at_Z_mass(mist_track_to_common, mist_index, mist_zkeys, Z, M, 0.0) if (w_p2 < 1 or rep_p2 is None) else None
+            if rep_p2 is not None and rep_mist is not None:
+                rep = _blend_tau(rep_mist, rep_p2, w_p2, M); src = 3 if w_p2 >= 0.5 else 2
+            elif rep_p2 is not None:
+                rep, src = rep_p2, 3
+            elif rep_mist is not None:
+                rep, src = rep_mist, 2
+            else:
+                rep = None
+            if rep is not None:
+                result = _tau_to_age(rep, TAU_GRID, log_age_grid)
+
+            # 2) edge fallback: nearest-Z catalogue track beyond the interpolation range
+            if result is None and M >= MASS_STITCH_P2_LO and p2_zstr is not None:
                 result = interpolate_parsec2_to_mass(p2_index, p2_zstr, M, log_age_grid)
                 if result is not None:
                     src = 3
-
-            # 2) MIST fallback: M < 2 or PARSEC v2 gap
             if result is None and mist_feh is not None:
                 result = interpolate_mist_to_mass(mist_index, mist_feh, M, log_age_grid)
                 if result is not None:
@@ -2855,6 +2926,9 @@ def build_all(base_dir, output_file):
             for k in TRANS_KEYS:
                 phase_trans[k][iz, im] = pt.get(k, 0.0)
 
+    if Z_INTERP_ONE_SIDED:
+        print(f"  WARNING: {len(Z_INTERP_ONE_SIDED)} log-Z interpolations used one bracket only; missing: "
+              f"{sorted(set(k for _, _, k in Z_INTERP_ONE_SIDED))}")
     print(f"\n  Track sources: PARSEC_v2={src_counts[3]}, MIST={src_counts[2]}, "
           f"BoOST={src_counts[1]}, PARSEC_v1={src_counts[0]}")
 
@@ -3268,6 +3342,7 @@ def build_all(base_dir, output_file):
         f.attrs['N_age'] = N_AGE
         f.attrs['N_elements'] = N_ELEM
         f.attrs['mass_stitch_p2_lo'] = MASS_STITCH_P2_LO
+        f.attrs['mass_stitch_p2_full'] = MASS_STITCH_P2_FULL
         f.attrs['mass_stitch_boost_lo'] = MASS_STITCH_BOOST_LO
         f.attrs['mass_stitch_boost_hi'] = MASS_STITCH_BOOST_HI
         f.attrs['band_edges_eV'] = ALL_BAND_EDGES_eV

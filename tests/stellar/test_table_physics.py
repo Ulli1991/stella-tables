@@ -41,7 +41,7 @@ class T:
 TESTS = []
 def test(fn): TESTS.append(fn); return fn
 XFAIL = {   # known open table issues: reported, not counted as failures
-    'lifetime_monotonic_in_mass': 'open item: MIST lifetimes non-monotonic near 1.9 Msun (Z=0.004 +3.6%), MIST->PARSEC v2 stitch at 2 Msun',
+    'lifetime_monotonic_in_mass': 'MIST v1.2 tracks themselves: lifetime rises ~4% at one mass step near 1.9 Msun (1.88->1.90 at [Fe/H]=-0.5, 1.94->1.96 at -0.25)',
 }
 
 

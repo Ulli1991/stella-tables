@@ -59,6 +59,13 @@ parses identical numbers. Files the builder only discovers by name become empty 
 catalogues gives tables identical to building from the full downloads (checked per dataset; see
 `tests/stellar/reference_fingerprints.json`).
 
+## Track stitching
+
+MIST (below 2 Msun) and PARSEC v2 (from 2 Msun) are each interpolated in log Z between their bracketing
+metallicity grids, in fractional-lifetime space, and blended linearly in log M over 2.0-2.5 Msun
+(`MASS_STITCH_P2_LO`, `MASS_STITCH_P2_FULL`). Truncated catalogue tracks are skipped in the mass bracketing.
+`track_source` marks the dominant catalogue (blend weight >= 0.5).
+
 ## Solar composition
 
 `stellar/solar_abundances.py` is the single source for the tables and for GIZMO (`core/init.cc`,
@@ -97,6 +104,7 @@ Expected failures (XFAIL) are listed in the test output with their reason and do
 
 ## Known limitations
 
-* Below 2 Msun the builder takes the nearest MIST [Fe/H] for each table Z instead of interpolating (up to
-  about 0.1 dex mismatch; MIST [Fe/H] = -1.00 is never used).
+* MIST v1.2's own tracks have a ~4% lifetime uptick at one mass step near 1.9 Msun ([Fe/H] = -0.5, -0.25),
+  which the table reproduces (XFAIL in `test_table_physics.py`).
+* Above the catalogue metallicity ranges (PARSEC v2 Z > 0.03, MIST Z > 0.0425) tracks are held at the edge.
 * Source URLs for the PARSEC v2, PARSEC v1.2 and BoOST downloads are not recorded yet (`fetch/README.md`).

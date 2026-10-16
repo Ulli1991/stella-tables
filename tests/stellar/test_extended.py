@@ -26,10 +26,15 @@ def fingerprints(table, wind):
     return fp
 
 
+STITCH_WINDOW = (1.8, 3.0)   # MIST -> PARSEC v2 join and blend (2.0-2.5 Msun) with margin
+
+
 def seam_excess(y, M, src, ok=None):
-    """per track-source seam: |step - local slope x dlogM| (dex), local slope from the two neighbouring intervals"""
+    """|step - local slope x dlogM| (dex) at every track-source change and every interval in STITCH_WINDOW;
+    local slope from the two neighbouring intervals"""
     lm = np.log10(M); worst = (0., None)
-    for k in np.where(src[1:] != src[:-1])[0]:
+    ks = set(np.where(src[1:] != src[:-1])[0]) | set(np.where((M[:-1] >= STITCH_WINDOW[0]) & (M[1:] <= STITCH_WINDOW[1]))[0])
+    for k in sorted(ks):
         if k < 1 or k + 2 >= len(M) or (ok is not None and not ok[k - 1:k + 3].all()): continue
         slope = 0.5 * ((y[k] - y[k - 1]) / (lm[k] - lm[k - 1]) + (y[k + 2] - y[k + 1]) / (lm[k + 2] - lm[k + 1]))
         e = abs(y[k + 1] - y[k] - slope * (lm[k + 1] - lm[k]))
@@ -45,9 +50,9 @@ def per_z(t, fn):
     return worst
 
 
-@test(xfail='open item: MIST->PARSEC v2 stitch at 2 Msun steps lifetime up to 0.06 dex (MIST nearest-[Fe/H], and MIST itself non-monotonic near 1.95 Msun at Z=0.006)')
+@test()
 def stitch_continuity_lifetime(t, w, lut):
-    """log lifetime(M) continuous across track-source seams (lifetimes below a Hubble time)"""
+    """log lifetime(M) continuous across track-source seams and the MIST/PARSEC v2 blend (lifetimes below a Hubble time)"""
     lt, src, M = np.log10(t['lifetime_yr'][()]), t['track_source'][()], t['M_init'][()]
     e, at = per_z(t, lambda iz: seam_excess(lt[iz], M, src[iz], lt[iz] < np.log10(1.4e10)))
     return e < 0.05, 'worst excess seam step %.3f dex at Z,M=%s' % (e, at)
@@ -68,7 +73,7 @@ def stitch_continuity_ms_luminosity(t, w, lut):
     return e < 0.1, 'worst excess seam step %.3f dex at Z,M=%s' % (e, at)
 
 
-@test(xfail='MIST and PARSEC v2 treat the pre-main sequence differently: L_bol at 1e5 yr jumps 0.1-0.3 dex at 2 Msun')
+@test()
 def stitch_continuity_pms_luminosity(t, w, lut):
     """pre-main-sequence (1e5 yr) log L_bol(M) continuous across track-source seams"""
     L, src, M = t['log_L_bol'][()], t['track_source'][()], t['M_init'][()]
