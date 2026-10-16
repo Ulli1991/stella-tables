@@ -42,7 +42,6 @@ TESTS = []
 def test(fn): TESTS.append(fn); return fn
 XFAIL = {   # known open table issues: reported, not counted as failures
     'lifetime_monotonic_in_mass': 'open item: MIST lifetimes non-monotonic near 1.9 Msun (Z=0.004 +3.6%), MIST->PARSEC v2 stitch at 2 Msun',
-    'x_init_consistent_with_Z': 'open item: solar abundance pattern; the 25 tracked metals hold 97.7% of Z at every Z',
 }
 
 

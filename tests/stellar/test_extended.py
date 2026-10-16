@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Extended checks on the built stellar tables: catalogue stitch, solar-constant consistency, spectral LUT,
+"""Extended checks on the built stellar tables: catalogue stitch, scaled-solar mixture, spectral LUT,
 band/bolometric consistency, ionizing-photon ordering, and dataset fingerprints against a reference build.
 
   test_extended.py BUILD_DIR [--write-fingerprints]     exit 0 = all PASS (expected failures do not fail the run)
 """
-import os, sys, json, hashlib, importlib.util
+import os, sys, json, hashlib
 import numpy as np, h5py
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -14,11 +14,6 @@ TESTS = []
 def test(xfail=None):
     def deco(fn): TESTS.append((fn, xfail)); return fn
     return deco
-
-
-def builder():
-    spec = importlib.util.spec_from_file_location('bst', os.path.join(REPO, 'stellar', 'build_stellar_tables.py'))
-    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); return m
 
 
 def fingerprints(table, wind):
@@ -82,19 +77,19 @@ def stitch_continuity_pms_luminosity(t, w, lut):
     return e < 0.1, 'worst excess seam step %.3f dex at Z,M=%s' % (e, at)
 
 
-@test(xfail='Z_SOLAR (0.014) vs Z_SOLAR_REF (0.0134) not yet unified')
-def solar_constants_consistent(t, w, lut):
-    b = builder(); src = open(os.path.join(REPO, 'stellar', 'build_stellar_tables.py')).read()
-    ref = [float(l.split('=')[1].split('#')[0]) for l in src.split('\n') if l.strip().startswith('Z_SOLAR_REF =')]
-    return all(abs(r - b.Z_SOLAR) < 1e-12 for r in ref), 'Z_SOLAR=%g, Z_SOLAR_REF=%s' % (b.Z_SOLAR, ref)
-
-
 @test()
 def scaled_solar_metal_pattern(t, w, lut):
     """the metal mixture in X_init is the same scaled pattern at every Z"""
     X = t['X_init'][()]; met = X[:, 2:]; pat = met / met.sum(1, keepdims=True)
     dev = np.max(np.abs(pat / pat[len(pat) // 2] - 1)[:, pat[len(pat) // 2] > 1e-6])
     return dev < 1e-6, 'max relative pattern deviation across Z = %.2e' % dev
+
+
+@test()
+def surface_abundances_sum_to_one(t, w, lut):
+    """surface mass fractions sum to 1 wherever set, so the wind mass ledger equals the track mass loss"""
+    s = t['surface_abundances'][()].astype(np.float64).sum(-1); m = s > 0
+    dev = np.max(np.abs(s[m] - 1)); return dev < 1e-6, 'max |sum_k surface - 1| = %.1e over %d alive entries' % (dev, m.sum())
 
 
 @test()

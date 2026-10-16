@@ -59,6 +59,13 @@ parses identical numbers. Files the builder only discovers by name become empty 
 catalogues gives tables identical to building from the full downloads (checked per dataset; see
 `tests/stellar/reference_fingerprints.json`).
 
+## Solar composition
+
+`stellar/solar_abundances.py` is the single source for the tables and for GIZMO (`core/init.cc`,
+`python3 stellar/solar_abundances.py --c` prints the array): Asplund+09 Table 1 photospheric ratios with standard
+atomic weights, metals C..Zn normalized to Z_sun = 0.014, Y = 0.2485 (A09 helioseismic), X = 1 - Y - Z. The table's
+X_init is this pattern scaled by Z/0.014, so it is exactly the composition GIZMO gives the gas.
+
 ## Chemistry tables
 
 `energy-table-x.txt` is tabulated in (ekn, x) with x = abh2 / (1 + abhe - abh2), so one table holds for any
@@ -82,6 +89,7 @@ sanity-checked, not regenerated.
 | `tests/stellar/test_invariants.py` | mass and wind closure under interpolation, monotonic cumulative winds, no NaN at the grid edges |
 | `tests/stellar/test_table_physics.py` | every dataset GIZMO's loader opens, physics sanity, provenance; `--compare A B` diffs two tables |
 | `tests/stellar/test_extended.py` | lifetime and L_bol continuity where the track source changes, solar constants, scaled-solar mixture, spectral LUT fractions, band luminosities below L_bol, ZAMS Q_ion rising with mass, table/wind grid agreement, per-dataset fingerprints against the reference build |
+| `tests/stellar/test_solar.py` | A09 transcription reproduces A09's Z and Z/X, pattern sums, table X_init = pattern x Z/0.014, GIZMO `init.cc` array equals the generator (`--gizmo`) |
 | `tests/chemistry/test_chemistry.py` | checksums, eh2 physics (1.5T at low T, c_v bounds, glitch row, seam), energy table regenerates byte for byte, layout, x = 0 block exact, gamma bounds, monotonicity, new vs original table |
 | `tests/chemistry/run_lookup_test.py` | built and original energy tables through GIZMO's Fortran `calc_temp.F` and the C++ port: T round trip to 2e-3 for abhe 0 / 0.079 / 0.1 / 0.12, backends agree, original and new identical off the seam |
 
@@ -89,7 +97,6 @@ Expected failures (XFAIL) are listed in the test output with their reason and do
 
 ## Known limitations
 
-* `Z_SOLAR` (0.014) and `Z_SOLAR_REF` (0.0134) in the builder disagree (XFAIL in `test_extended.py`).
 * Below 2 Msun the builder takes the nearest MIST [Fe/H] for each table Z instead of interpolating (up to
   about 0.1 dex mismatch; MIST [Fe/H] = -1.00 is never used).
 * Source URLs for the PARSEC v2, PARSEC v1.2 and BoOST downloads are not recorded yet (`fetch/README.md`).

@@ -138,17 +138,10 @@ ISOTOPE_TO_ELEMENT = {
     'Fe': 'Fe', 'Co': 'Co', 'Ni': 'Ni', 'Cu': 'Cu', 'Zn': 'Zn',
 }
 
-# Solar mass fractions (Asplund+ 2009) for scaling initial abundances
-Z_SOLAR = 0.014
-SOLAR_MASS_FRAC = {  # Asplund+ 2009 proto-solar mass fractions
-    'H': 0.7381, 'He': 0.2485, 'C': 2.36e-3, 'N': 6.91e-4, 'O': 5.72e-3,
-    'F': 3.26e-7, 'Ne': 1.25e-3, 'Na': 2.98e-5, 'Mg': 5.91e-4,
-    'Al': 5.57e-5, 'Si': 6.65e-4, 'P': 5.16e-6, 'S': 3.10e-4,
-    'Cl': 3.15e-6, 'Ar': 7.37e-5, 'K': 2.93e-6, 'Ca': 6.44e-5,
-    'Sc': 3.48e-8, 'Ti': 3.59e-6, 'V': 2.30e-7, 'Cr': 1.37e-5,
-    'Mn': 9.17e-6, 'Fe': 1.17e-3, 'Co': 3.30e-6, 'Ni': 6.99e-5,
-    'Cu': 7.20e-7, 'Zn': 1.67e-6,
-}
+# Solar composition: single source shared with GIZMO (A09 ratios, metals sum to Z_SOLAR)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from solar_abundances import Z_SUN as Z_SOLAR, solar_pattern
+SOLAR_MASS_FRAC = solar_pattern()
 # Metal fractions relative to Z (for scaling to arbitrary Z)
 SOLAR_METAL_FRAC = {e: SOLAR_MASS_FRAC[e] / Z_SOLAR for e in TRACKED_ELEMENTS
                     if e not in ('H', 'He')}
@@ -3012,6 +3005,10 @@ def build_all(base_dir, output_file):
     #   cum_injected = M_init − P[i].Mass  vs  cum_table = Σ cum_wind(t),
     # so the two must agree). ──
     print("\nBuilding cumulative wind ejecta...", flush=True)
+    # tracked + solar-scaled surface fractions need not sum to 1; normalize so wind mass = track mass loss
+    ssum = surface.astype(np.float64).sum(axis=-1, keepdims=True)
+    surface = np.where(ssum > 0, surface / np.where(ssum > 0, ssum, 1.0), surface).astype(surface.dtype)
+    print(f"  surface abundances normalized: row sums were {ssum[ssum > 0].min():.4f}..{ssum[ssum > 0].max():.4f}")
     elem_ej_wind = np.zeros((N_Z, N_M, N_AGE, N_ELEM), dtype=np.float32)
     for iz in range(N_Z):
         for im in range(N_M):
@@ -3139,17 +3136,7 @@ def build_all(base_dir, output_file):
         f['M_He_core'].attrs['units'] = 'Msun, He core mass at end of life'
 
         # ── Absolute per-event element ejecta (preferred runtime path) ──
-        # Build X_init[Z, k]: Asplund09 proto-solar pattern x (Z/Z_solar) for metals,
-        # proto-solar X_He, X_H = remainder. Σ_k X_init = 1 per Z.
-        SOLAR_FRAC = {
-            'H': 0.7381, 'He': 0.2485, 'C': 2.36e-3, 'N': 6.91e-4, 'O': 5.72e-3,
-            'F': 3.26e-7, 'Ne': 1.25e-3, 'Na': 2.98e-5, 'Mg': 5.91e-4, 'Al': 5.57e-5,
-            'Si': 6.65e-4, 'P': 5.16e-6, 'S': 3.10e-4, 'Cl': 3.15e-6, 'Ar': 7.37e-5,
-            'K': 2.93e-6, 'Ca': 6.44e-5, 'Sc': 3.48e-8, 'Ti': 3.59e-6, 'V': 2.30e-7,
-            'Cr': 1.37e-5, 'Mn': 9.17e-6, 'Fe': 1.17e-3, 'Co': 3.30e-6, 'Ni': 6.99e-5,
-            'Cu': 7.20e-7, 'Zn': 1.67e-6,
-        }
-        Z_SOLAR_REF = 0.0134
+        # X_init[Z, k]: solar pattern x Z/Z_SOLAR for metals (sums to Z), solar He, H = remainder
         REM_WD = 0; REM_ECSN = 1; REM_CCSN = 2; REM_PPISN = 4; REM_PISN = 5
         SN_TYPES = {REM_ECSN, REM_CCSN, REM_PPISN, REM_PISN}
 
@@ -3161,8 +3148,8 @@ def build_all(base_dir, output_file):
             for k, e in enumerate(TRACKED_ELEMENTS):
                 if e in ('H', 'He'):
                     continue
-                X_init[iz, k] = SOLAR_FRAC[e] * (Zv / Z_SOLAR_REF)
-            X_init[iz, iHe] = SOLAR_FRAC['He']
+                X_init[iz, k] = SOLAR_MASS_FRAC[e] * (Zv / Z_SOLAR)
+            X_init[iz, iHe] = SOLAR_MASS_FRAC['He']
             X_init[iz, iH]  = 1.0 - X_init[iz, iHe] - X_init[iz, [k for k in range(N_ELEM) if k not in (iH, iHe)]].sum()
         assert np.allclose(X_init.sum(axis=1), 1.0, atol=1e-12), 'X_init rows must sum to 1'
 
@@ -3208,8 +3195,9 @@ def build_all(base_dir, output_file):
 
         ds = f.create_dataset('X_init', data=X_init, **comp)
         ds.attrs['units'] = 'mass_fraction'
-        ds.attrs['description'] = ('Assumed birth composition per Z (Asplund09 proto-solar '
-                                    'pattern x Z/Z_solar for metals, proto-solar X_He, X_H = remainder).')
+        ds.attrs['description'] = ('Assumed birth composition per Z (Asplund+09 photospheric ratios, '
+                                    'metals = pattern x Z/0.014 summing to Z, Y = 0.2485, X = remainder; '
+                                    'stellar/solar_abundances.py).')
 
     # ── Cumulative wind ejecta: split into a separate file to keep the main
     # table small. elem_ej_wind was built upstream of M_current redefinition;
