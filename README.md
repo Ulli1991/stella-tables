@@ -86,8 +86,11 @@ has two defects the generator handles:
   stays within [1.25, 5/3]. `--legacy-seam` reproduces the original GIZMO table byte for byte, and a copy of it
   is kept in `chemistry/reference/`; the tests compare against it.
 
-`H2-cooling-ratios.dat` and `wss_z_collis.txt` have no recorded origin. They are checksum-locked and
-sanity-checked, not regenerated.
+`wss_z_collis.txt` is the collisional-ionization-equilibrium metal cooling table of Wiersma, Schaye & Smith
+(2009), bit-identical to the official release (md5 checked against the Leiden distribution, 2026-07-28). It came
+to GIZMO through the TNT code (Hu et al.); GIZMO uses the nine metal columns (C, N, O, Ne, Mg, Si, S, Ca, Fe) and
+suppresses them below 1e4 K with exp(-(1e4/T)^2) when loading (`wss_z_collis.F`). `H2-cooling-ratios.dat` has no
+recorded origin. Both are checksum-locked and sanity-checked, not regenerated.
 
 ## Tests
 

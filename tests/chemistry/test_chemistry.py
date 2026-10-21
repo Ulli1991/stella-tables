@@ -3,8 +3,9 @@
 
   test_chemistry.py BUILD_DIR      exit 0 = all PASS (expected failures do not fail the run)
 
-eh2-table.txt, H2-cooling-ratios.dat and wss_z_collis.txt are inherited tables of unknown provenance: they are
-checksum-locked here so any change is deliberate, and sanity-checked. energy-table-x.txt is regenerated from eh2.
+eh2-table.txt and H2-cooling-ratios.dat are inherited tables of unknown provenance; wss_z_collis.txt is the
+Wiersma, Schaye & Smith (2009) CIE table (official release). All three are checksum-locked here so any change is
+deliberate, and sanity-checked. energy-table-x.txt is regenerated from eh2.
 """
 import os, sys, hashlib, importlib.util
 import numpy as np
