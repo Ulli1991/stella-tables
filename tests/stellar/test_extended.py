@@ -82,6 +82,35 @@ def stitch_continuity_pms_luminosity(t, w, lut):
     return e < 0.1, 'worst excess seam step %.3f dex at Z,M=%s' % (e, at)
 
 
+BLEND_EDGES = (2.0, 2.5)      # MIST -> PARSEC v2 blend window edges (MASS_STITCH_P2_LO, _FULL)
+
+
+def edge_excess(y, M):
+    """|step - local slope x dlogM| (dex) on the mass intervals that straddle the blend-window edges"""
+    lm = np.log10(M); worst = (0., None)
+    for e in BLEND_EDGES:
+        k = int(np.searchsorted(M, e)) - 1          # M[k] < e <= M[k+1]
+        if k < 1 or k + 2 >= len(M): continue
+        slope = 0.5 * ((y[k] - y[k - 1]) / (lm[k] - lm[k - 1]) + (y[k + 2] - y[k + 1]) / (lm[k + 2] - lm[k + 1]))
+        d = abs(y[k + 1] - y[k] - slope * (lm[k + 1] - lm[k]))
+        if np.isfinite(d) and d > worst[0]: worst = (d, (M[k], M[k + 1]))
+    return worst
+
+
+@test()
+def blend_edges_continuous_post_ms(t, w, lut):
+    """at the 2.0 and 2.5 Msun blend edges: post-MS duration, remnant mass, returned mass, L_bol at half life
+    have no excess step > 0.05 dex at any Z (the unblended join stepped -0.13 dex in post-MS duration)"""
+    M, lt, tms = t['M_init'][()], t['lifetime_yr'][()], t['phase_transitions/t_MS_end'][()]
+    rem, L = t['remnant_mass'][()], t['log_L_bol'][()]
+    ia = np.clip(np.searchsorted(t['log_age_yr'][()], np.log10(0.5 * lt)), 0, L.shape[-1] - 1)
+    with np.errstate(divide='ignore'):   # zero remnants (PISN) are far from the blend edges
+        q = {'post-MS duration': np.log10(lt - tms), 'remnant mass': np.log10(rem), 'returned mass': np.log10(M - rem),
+             'L_bol(t/2)': np.take_along_axis(L, ia[..., None], 2)[..., 0]}
+    res = {k: per_z(t, lambda iz: edge_excess(v[iz], M)) for k, v in q.items()}
+    return all(r[0] < 0.05 for r in res.values()), '; '.join('%s %.3f dex at Z,M=%s' % (k, r[0], r[1]) for k, r in res.items())
+
+
 @test()
 def scaled_solar_metal_pattern(t, w, lut):
     """the metal mixture in X_init is the same scaled pattern at every Z"""
