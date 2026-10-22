@@ -200,19 +200,15 @@ MIST_SURFACE_ELEM = {
     'Fe': ['surface_fe56'],
 }
 
-# MIST [Fe/H] → approximate Z mapping (Asplund+ 2009)
-# Z = 0.751 * ZX / (1 + 2.5*ZX) where ZX = (Z/X)_solar * 10^[Fe/H]
-_ZX_SOLAR = Z_SOLAR / SOLAR_MASS_FRAC['H']
+# MIST v1.2 initial Z: the track headers give Zinit = 1.42857e-2 * 10^[Fe/H] (MIST's own protosolar scale)
+MIST_ZINIT_SOLAR = 1.42857e-2
 MIST_FEH_GRID = {
     'm4.00': -4.0, 'm3.50': -3.5, 'm3.00': -3.0, 'm2.50': -2.5,
     'm2.00': -2.0, 'm1.75': -1.75, 'm1.50': -1.5, 'm1.25': -1.25,
     'm1.00': -1.0, 'm0.75': -0.75, 'm0.50': -0.5, 'm0.25': -0.25,
     'p0.00': 0.0, 'p0.25': 0.25, 'p0.50': 0.5,
 }
-MIST_Z_GRID = {}
-for feh_str, feh_val in MIST_FEH_GRID.items():
-    ZX = _ZX_SOLAR * 10**feh_val
-    MIST_Z_GRID[feh_str] = 0.751 * ZX / (1.0 + 2.5 * ZX)
+MIST_Z_GRID = {feh_str: MIST_ZINIT_SOLAR * 10**feh_val for feh_str, feh_val in MIST_FEH_GRID.items()}
 
 # PARSEC v2 VMS surface columns → element mapping (from .TAB track files)
 # Only 7 surface elements available; rest use initial composition (solar-scaled)

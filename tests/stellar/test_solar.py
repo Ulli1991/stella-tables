@@ -76,6 +76,20 @@ def lut_metallicity_on_z_sun(a):
     return max(d1, d2) < 1e-12, 'builder max |log Z - log Z_sun - [M/H]| = %.1e dex, generator |Z([M/H]=0)/Z_sun - 1| = %.1e' % (d1, d2)
 
 
+@test
+def mist_grid_z_matches_headers(a):
+    """MIST grid Z used for log-Z interpolation equals the Zinit in every (non-empty) MIST track header"""
+    import glob, build_stellar_tables as B
+    root = os.path.join(a.build, 'data_root', 'mist'); worst = (0., None); n = 0
+    for key, z in B.MIST_Z_GRID.items():
+        for fn in glob.glob(os.path.join(root, 'MIST_v1.2_feh_%s_*' % key, '*.track.eep')):
+            if os.path.getsize(fn) == 0: continue
+            with open(fn) as fh: zh = float([next(fh) for _ in range(5)][4].split()[2])
+            n += 1; d = abs(z / zh - 1)
+            if d > worst[0]: worst = (d, os.path.relpath(fn, root))
+    return n > 0 and worst[0] < 1e-5, '%d tracks, max rel dev %.1e %s' % (n, worst[0], worst[1] or '')
+
+
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('build'); ap.add_argument('--gizmo'); a = ap.parse_args()
     nf = 0
