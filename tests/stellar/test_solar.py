@@ -41,6 +41,18 @@ def table_x_init_is_pattern(a):
 
 
 @test
+def table_z_sun_attribute(a):
+    """table root attribute Z_sun (float64) equals solar_abundances.Z_SUN; X_init metals sum to Z_sun at Z = Z_sun"""
+    with h5py.File(os.path.join(a.build, 'stellar_tables_unified.hdf5'), 'r') as f:
+        if 'Z_sun' not in f.attrs or 'solar_abundance_source' not in f.attrs: return False, 'Z_sun / solar_abundance_source missing'
+        zs = f.attrs['Z_sun']; X, Z = f['X_init'][()], f['Z'][()]
+    i = np.where(Z == zs)[0]
+    if not isinstance(zs, np.float64) or zs != sa.Z_SUN or len(i) != 1: return False, 'Z_sun=%r (%s), grid row %s' % (zs, type(zs).__name__, i)
+    d = abs(X[i[0], 2:].sum() / zs - 1)
+    return d < 1e-12, 'Z_sun = %r float64; X_init metals at Z_sun sum to Z_sun (rel dev %.1e)' % (float(zs), d)
+
+
+@test
 def gizmo_init_array(a):
     """GIZMO core/init.cc solar_elem[27] equals the generator (needs --gizmo)"""
     if not a.gizmo: return True, 'skipped (no --gizmo)'

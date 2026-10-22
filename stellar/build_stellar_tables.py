@@ -3303,6 +3303,8 @@ def build_all(base_dir, output_file):
         f.attrs['description'] = 'Unified stellar evolution + yield tables for GIZMO'
         f.attrs['evolution_sources'] = ('PARSEC v2 VMS (M >= 2, primary) + MIST v1.2 (M < 2 + fallback) '
                                           '+ BoOST v1.3 (fallback) + PARSEC v1.2s (last resort)')
+        f.attrs['Z_sun'] = np.float64(Z_SOLAR)   # read by GIZMO as its solar Z; keep name and type
+        f.attrs['solar_abundance_source'] = 'Asplund+09 Table 1 photospheric log eps, metals C..Zn normalized to Z_sun (stellar/solar_abundances.py)'
         f.attrs['yield_sources'] = ('Karakas AGB [K&L(2016) Z>=0.007 + K(2010) Z<0.007] '
                                     '+ Limongi+(2025) 8-13Msun + NuGrid Z-scaling (8-13) '
                                     '+ PARSEC v2 14+Msun + Iwamoto(1999) Type Ia')
