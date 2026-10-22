@@ -6,6 +6,8 @@
 RAW_ROOT/svo/tlusty_{ostar,bstar}bin/fid*.xml   TLUSTY OSTAR2002 (Lanz & Hubeny 2003) and BSTAR2006 (2007) from SVO
 RAW_ROOT/powr/<grid>/                            PoWR OB Vd3 log Q tables, WR SEDs (sed/*.txt, *.modinfo), models.txt
 RAW_ROOT/gotberg18/grid_*/<model>/SED.txt        Gotberg+2018 stripped stars (CDS J/A+A/615/A78), paper tables in paper/x
+RAW_ROOT/pollux/<collection>/*.sed(.txt)        CMFGEN O stars and very massive stars (Martins & Palacios 2017-2022, Martins+2025)
+                                                 from POLLUX; Martins+2025 tables in pollux/paper_martins2025/x
 
 Every spectrum goes through build_spectral_lut.integrate_bands: band energy fractions L_band/L_bol and photon rates
 per erg/s of L_bol, the same convention as the ATLAS9 LUT. Cell class per grid cell: 0 model, 1 interpolated in Z
@@ -225,7 +227,85 @@ def gotberg(root):
     return out
 
 
-def write(path, tl, ob, wr, gb):
+# ── CMFGEN (Martins & Palacios) via POLLUX ────────────────────────────────────
+# Z/Zsun of each set (relative to the grids' own solar), POLLUX collection and file prefix
+CMF_SETS = [(1.0, 'CMFGEN-SED', 'MW_'), (0.4, 'VMS-ZLMC-SED', 'Zlmc_'), (0.2, 'CMFGEN-SED', 'Zsmc_'), (0.2, 'VMS-ZSMC-SED', 'Zsmc_'),
+            (0.1, 'VMS-Z0p1Zsun-SED', 'Z0p1_'), (1 / 30., 'CMFGEN-SED', 'Z1on30_'), (0.01, 'VMS-Z0p01Zsun-SED', 'Z0p01_')]
+CMF_TABLE = {'VMS-ZSMC-SED': 'zsmc', 'VMS-Z0p1Zsun-SED': 'z0p1', 'VMS-Z0p01Zsun-SED': 'z0p01'}
+CMF_X_MIN = 0.4            # surface X below this is a WR phase in hotstar_radiation (PoWR WR / Gotberg)
+
+
+def pollux_meta(path):
+    return {k: v.strip() for k, v in re.findall(r"^\s*(\w+)\s*=\s*'([^']*)'", open(path, errors='ignore').read(), re.M)}
+
+
+def martins25_rows(tex):
+    """Martins+2025 Tables A.1-A.6 per model: M, Teff, log g, log L, log Mdot, X; set x0 (VMS Mdot not scaled with Z) or x1 (scaled with Z/Z_LMC)"""
+    rows = []
+    f = lambda x: float(x.rstrip('.')) if x not in ('-', '') else np.nan
+    for m in re.finditer(r'\\label\{tab_(grz?)_(zsmc|z0p1|z0p01)\}(.*?)\\end\{tabular\}', open(tex).read(), re.S):
+        s, z, body = m.groups()
+        for ln in body.splitlines():
+            c = [x.strip() for x in ln.replace('\\\\', '').split('&')]
+            if len(c) < 10 or not re.match(r'^[0-9.]+$', c[0]): continue
+            rows.append(dict(set='x1' if s == 'grz' else 'x0', z=z, M=f(c[0]), T=f(c[1]), g=f(c[2]), logL=f(c[3]), log_Mdot=f(c[5]),
+                             X=f(c[8]) if c[8] != '-' else 1 - f(c[9])))
+    return rows
+
+
+def _closest(rows, T, lg, key, fn):
+    """parameter row of the model named fn (Teff T, log g lg from the name): Teff within 300 K, log g within 0.25 (typos in names)"""
+    c = [r for r in rows if abs(key(r)[0] - T) < 300 and abs(key(r)[1] - lg) < 0.25]
+    if not c: raise ValueError('no parameter row for %s' % fn)
+    return min(c, key=lambda r: (abs(key(r)[0] - T) / 100) ** 2 + ((key(r)[1] - lg) / 0.01) ** 2)
+
+
+def cmfgen(root):
+    """per Z set: scattered (log Teff, log g) CMFGEN models with band fractions. Coordinates are the evolutionary-model Teff and
+    log g each spectrum was computed for: the Martins+2025 tables for the low-Z VMS, else the file name (several POLLUX
+    headers carry a neighbouring model's parameters; X and Mdot come from the header row whose Teff and log g match).
+    Low-Z VMS: the Z-scaled mass-loss sequences (x1) only. Models with X < CMF_X_MIN are dropped."""
+    d = os.path.join(root, 'pollux'); rows = martins25_rows(os.path.join(d, 'paper_martins2025', 'x', 'vms_lowZ.tex'))
+    out = {}
+    for zrel, coll, pre in CMF_SETS:
+        files = sorted(glob.glob(os.path.join(d, coll, '*.sed')))
+        metas = [pollux_meta(f + '.txt') for f in files]
+        files, metas = zip(*[(f, m) for f, m in zip(files, metas) if m['filename_atm'].startswith(pre)])
+        for f, me in zip(files, metas):
+            fn = me['filename_atm']
+            t = re.search(r'_T(\d+)p(\d+)', fn); g = re.search(r'_hy?d?ro(\d)p(\d+)', fn)
+            T, lg = float(t.group(1) + '.' + t.group(2)) * 1e3, float(g.group(1) + '.' + g.group(2))
+            if coll in CMF_TABLE:
+                r = _closest([r for r in rows if r['z'] == CMF_TABLE[coll]], T, lg, lambda r: (r['T'], r['g']), fn)
+                if r['set'] != 'x1': continue
+                T, lg, X, lMd, src = r['T'], r['g'], r['X'], r['log_Mdot'], 'Martins+2025'
+            else:
+                hm = _closest(metas, T, lg, lambda m: (float(m['Teff']), float(m['logg'])), fn)
+                T, lg = float(hm['Teff']), float(hm['logg'])
+                gchk = np.log10(4 * np.pi * 5.670374e-5 * 6.674e-8 * float(hm['mass']) * 1.989e33 * T ** 4 / (10 ** float(hm['lum']) * L_sun))
+                if abs(gchk - lg) > 0.03: raise ValueError('%s: header log g %.2f vs GM/R^2 %.2f' % (fn, lg, gchk))
+                X = 1 / (1 + 4 * 10 ** (float(hm['Abu_02']) - 12)); lMd = float(hm['Mdot'])
+                src = 'Martins & Palacios 2022' if coll == 'VMS-ZLMC-SED' else ('Martins & Palacios 2017' if pre == 'MW_' else 'Martins & Palacios 2021')
+            if X < CMF_X_MIN: continue
+            a = np.loadtxt(f); ef, qf = bands(a[:, 0], a[:, 1])
+            tsed = (np.trapz(a[:, 1], a[:, 0]) / 5.670374e-5) ** 0.25      # flux is given below the photosphere: T_sed >= Teff
+            if not 0.97 < tsed / T < 1.6: raise ValueError('%s: SED temperature %.0f K vs Teff %.0f K' % (fn, tsed, T))
+            o = out.setdefault('%.4f' % zrel, dict(Z_rel=zrel, rec=[]))
+            o['rec'].append((np.log10(T), lg, X, lMd, ef, qf, os.path.basename(f), src))
+    res = {}
+    for k, o in out.items():
+        rec = sorted(o['rec'], key=lambda r: (r[0], r[1])); keep = []
+        for r in rec:                  # one model per (Teff, log g) position
+            if not any(abs(r[0] - q[0]) < 1e-4 and abs(r[1] - q[1]) < 0.006 for q in keep): keep.append(r)
+        res[k] = dict(log_Teff=np.array([r[0] for r in keep]), logg=np.array([r[1] for r in keep]), X_surf=np.array([r[2] for r in keep]),
+                      log_Mdot=np.array([r[3] for r in keep]), energy_fracs=np.array([r[4] for r in keep]),
+                      photon_rates_per_L=np.array([r[5] for r in keep]), files=np.array([r[6] for r in keep], dtype='S'),
+                      Z_rel=o['Z_rel'], sources=', '.join(sorted({r[7] for r in keep})), n_models=len(keep),
+                      n_duplicates_dropped=len(rec) - len(keep))
+    return res
+
+
+def write(path, tl, ob, wr, gb, cm):
     def put(grp, d):
         for k, v in d.items():
             if isinstance(v, np.ndarray): grp.create_dataset(k, data=v, compression='gzip', compression_opts=4)
@@ -241,6 +321,9 @@ def write(path, tl, ob, wr, gb):
         f['powr_wr'].attrs['source'] = 'PoWR WR grids (Todt+2015, Hamann+2006, Sander+2012, Hainich+2014/2015), SEDs per model'
         for z, d in gb.items(): put(f.create_group('gotberg/' + z), d)
         f['gotberg'].attrs['source'] = 'Gotberg+2018 A&A 615 A78 stripped-star CMFGEN SEDs; Teff, log g, X_s from the paper tables'
+        for z, d in cm.items(): put(f.create_group('cmfgen/' + z), d)
+        f['cmfgen'].attrs['source'] = ('CMFGEN O-star and very-massive-star SEDs along evolutionary tracks (Martins & Palacios 2017, 2021, 2022; '
+                                       'Martins+2025, Z-scaled VMS mass loss), POLLUX (Palacios+2010); scattered in (log Teff, log g) per Z')
 
 
 if __name__ == '__main__':
@@ -250,4 +333,5 @@ if __name__ == '__main__':
     ob = powr_ob(root); print('PoWR OB:', {g: (d['n_models'], int((d['cell_class'] == 2).sum())) for g, d in ob.items()}, flush=True)
     wr = powr_wr(root); print('PoWR WR:', {g: (d['family'], round(d['Z_rel'], 3), d['X_H'], d['n_models'], round(d['qcheck_max_dex'], 3)) for g, d in wr.items()}, flush=True)
     gb = gotberg(root); print('Gotberg:', {z: (len(d['Teff_kK']), round(d['logL_check_max_dex'], 3), round(d['logQ0_check_max_dex'], 3)) for z, d in gb.items()}, flush=True)
-    write(out, tl, ob, wr, gb); print('wrote', out)
+    cm = cmfgen(root); print('CMFGEN:', {z: (d['n_models'], d['n_duplicates_dropped'], d['sources']) for z, d in cm.items()}, flush=True)
+    write(out, tl, ob, wr, gb, cm); print('wrote', out)
