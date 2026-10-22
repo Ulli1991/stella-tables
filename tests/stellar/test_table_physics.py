@@ -188,6 +188,17 @@ def radiation_residuals(t, source, lookup):
     return out
 
 @test
+def photon_rates_nested(t):
+    """recorded source on a Teff (3.5-200 kK) x log g (0-6) x Z lattice: Q_ion >= Q_He0 >= Q_He1 and Q_ion >= Q_ion_H0"""
+    import build_stellar_tables as B
+    a = t.f.attrs; B.RADIATION.update(source=a['radiation_source_option'], lookup=a.get('atlas9_lookup_option'))
+    lT, lg, lZ = np.meshgrid(np.linspace(np.log10(3500), np.log10(2e5), 60), np.linspace(0, 6, 13), np.log10(t.Z), indexing='ij')
+    lT, lg, lZ = lT.ravel(), lg.ravel(), lZ.ravel()
+    r = B.compute_radiation_from_lut(lT, np.full(lT.size, 5.0), lg, lZ)
+    worst = max(float(np.max(r[x] - r[y] * (1 + 1e-12))) for y, x in (('Q_ion', 'Q_He0'), ('Q_He0', 'Q_He1'), ('Q_ion', 'Q_ion_H0')))
+    return worst <= 0, 'max (inner - outer) photon rate on the lattice: %.3g /s (L = 1e5 Lsun)' % worst
+
+@test
 def radiation_source_recorded(t):
     """table names its radiation source and options; atlas9 builds record the LUT checksum and coverage"""
     a = t.f.attrs; src = a.get('radiation_source_option')

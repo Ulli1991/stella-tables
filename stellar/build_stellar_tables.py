@@ -61,6 +61,8 @@ ENERGY_BANDS = [
 PHOTON_RATE_BANDS = [
     ('Q_ion',     13.6,  None),   # total ionizing photon rate
     ('Q_ion_H0',  13.6,  24.6),   # H-only ionizing photon rate
+    ('Q_He0',     24.6,  None),   # He0-ionizing photon rate
+    ('Q_He1',     54.4,  None),   # He+-ionizing photon rate
 ]
 
 # Combination bands: name → list of atomic sub-band names to sum
@@ -101,6 +103,8 @@ RAD_DESCRIPTIONS = {
     'L_bol':       'log10(erg/s), bolometric',
     'Q_ion':       'log10(photons/s), > 13.6 eV, total ionizing photons',
     'Q_ion_H0':    'log10(photons/s), 13.6-24.6 eV, H ionizing photons',
+    'Q_He0':       'log10(photons/s), > 24.6 eV, He0 ionizing photons',
+    'Q_He1':       'log10(photons/s), > 54.4 eV, He+ ionizing photons',
 }
 
 # All band edges for HDF5 metadata (sorted, unique, eV)
