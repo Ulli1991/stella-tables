@@ -67,6 +67,25 @@ metallicity grids, in fractional-lifetime space, and blended linearly in log M o
 `track_source` marks the dominant catalogue (blend weight >= 0.5). MIST grids sit at their own initial Z
 (track headers: Zinit = 1.42857e-2 x 10^[Fe/H]), PARSEC v2 at the Z of its grid.
 
+## Radiation
+
+Band luminosities and ionizing photon rates of every track point come from one explicitly chosen source
+(`build_stellar_tables.py --radiation-source`, `STELLA_RADIATION_SOURCE` for `build.sh`), recorded in the table
+attributes (`radiation_source*`, `atlas9_lookup_option`, `spectral_lut_sha256`).
+
+- `planck`: blackbody at Teff.
+- `atlas9`: `stellar/data/lut/spectral_band_lut.hdf5` (ATLAS9 Castelli-Kurucz >= 3500 K, PHOENIX-ACES below), trilinear
+  in log Teff, log g, log Z ([M/H] = log Z/Z_sun). The LUT spans 3.5-50 kK and log g 0-5 and has no models for hot
+  low-gravity stars; its empty cells were filled with the nearest model when it was built (`has_data` marks the
+  real ones). `--atlas9-lookup` (`STELLA_ATLAS9_LOOKUP`):
+  - `legacy`: log g = 4 and Z = Z_sun for every point, linear extrapolation off the grid (every build before this option),
+  - `clamp`: the point's log g (from track mass and radius) and initial Z, clamped to the grid edges,
+  - `masked_planck`: the point's log g and Z; blackbody wherever an interpolation corner is a filled cell or the
+    point is off the grid.
+
+  `radiation_coverage_*` attributes give the share of track points (and of their blackbody Q_H0) that hit only
+  models, a filled cell, or nothing. Default `atlas9` / `legacy`.
+
 ## Solar composition
 
 `stellar/solar_abundances.py` is the single source for the tables and for GIZMO (`core/init.cc`,

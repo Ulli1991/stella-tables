@@ -370,53 +370,67 @@ def get_planck_lut():
         PLANCK_LUT = build_planck_lut()
     return PLANCK_LUT
 
-def compute_radiation_from_lut(logTeff_arr, logL_arr, logg_arr=None, logZ_arr=None):
-    """Vectorized radiation computation.
+RADIATION_SOURCES = ('atlas9', 'planck')
+ATLAS9_LOOKUP = ('legacy', 'clamp', 'masked_planck')
+RADIATION = {'source': None, 'lookup': None}   # set from the command line; no default
+RAD_COVERAGE = {}   # track file -> [n_real, n_gapfilled, n_outside, Q_planck_real, Q_planck_gapfilled, Q_planck_outside]
 
-    Uses spectral atmosphere LUT if available (ATLAS9/PHOENIX), otherwise
-    falls back to Planck blackbody. The spectral LUT captures line blanketing
-    that suppresses ionizing flux by 10-1000x for B-type stars.
 
-    Returns dict with keys from RAD_KEYS:
-      L_<band>  in erg/s (for energy bands and combinations)
-      Q_<band>  in photons/s (for photon-rate bands)
-      L_bol     in erg/s
-    """
-    # Try spectral atmosphere models first
-    spec = get_spectral_lut()
-    if spec is not None:
-        return compute_radiation_from_spectral_lut(logTeff_arr, logL_arr,
-                                                    logg_arr=logg_arr,
-                                                    logZ_arr=logZ_arr)
+def log_g(M_Msun, R_cm):
+    return np.log10(G_cgs * np.maximum(M_Msun, 1e-30) * M_sun_g) - 2.0 * np.log10(np.maximum(R_cm, 1.0))
 
-    # Fall back to Planck blackbody
+
+def planck_band_fractions(logTeff_arr):
+    """Planck L_band/L_bol and Q_band/L_bol at each log Teff"""
     log_T, energy_fracs, photon_rates_per_L = get_planck_lut()
+    ef = {n: np.interp(logTeff_arr, log_T, energy_fracs[n], left=0, right=0) for n, _, _ in ENERGY_BANDS}
+    qf = {n: np.interp(logTeff_arr, log_T, photon_rates_per_L[n], left=0, right=0) for n, _, _ in PHOTON_RATE_BANDS}
+    return ef, qf
+
+
+def compute_radiation_from_lut(logTeff_arr, logL_arr, logg_arr, logZ_arr, tag=None):
+    """Band luminosities [erg/s] and photon rates [1/s] for track points (log L in Lsun).
+
+    RADIATION['source'] = 'planck': blackbody at Teff.
+                          'atlas9': spectral LUT (ATLAS9 / PHOENIX), trilinear in (log Teff, log g, log Z), with
+    RADIATION['lookup'] = 'legacy': log g = 4 and Z = Z_sun for every point, LUT as built (gap cells nearest-neighbour
+                                    filled), linear extrapolation off the grid (all builds before this option)
+                          'clamp': the point's log g and Z, clamped to the grid edges; LUT as built
+                          'masked_planck': the point's log g and Z; Planck wherever an interpolation corner is a
+                                    gap-filled cell or the point is off the grid.
+    tag: track file; its coverage counts go to RAD_COVERAGE.
+    """
+    src, look = RADIATION['source'], RADIATION['lookup']
+    if src not in RADIATION_SOURCES:
+        raise ValueError('radiation source not set (one of %s)' % (RADIATION_SOURCES,))
     L_erg = 10**logL_arr * L_sun
-
-    result = {}
-
-    # Atomic energy sub-bands
-    for name, _, _ in ENERGY_BANDS:
-        f = np.interp(logTeff_arr, log_T, energy_fracs[name], left=0, right=0)
-        result['L_' + name] = L_erg * f
-
-    # Photon rates
-    for name, _, _ in PHOTON_RATE_BANDS:
-        q = np.interp(logTeff_arr, log_T, photon_rates_per_L[name], left=0, right=0)
-        result[name] = L_erg * q
-
-    # Combination bands (sum of atomic sub-bands)
+    pe, pq = planck_band_fractions(logTeff_arr)
+    if src == 'planck':
+        ef, qf = pe, pq
+    else:
+        if look not in ATLAS9_LOOKUP:
+            raise ValueError('ATLAS9 lookup not set (one of %s)' % (ATLAS9_LOOKUP,))
+        if look == 'legacy':
+            logg_arr = np.full(len(logTeff_arr), 4.0)
+            logZ_arr = np.full(len(logTeff_arr), np.log10(Z_SOLAR))
+        ef, qf, cls = spectral_band_fractions(logTeff_arr, logg_arr, logZ_arr, clamp=(look == 'clamp'))
+        if look == 'masked_planck':
+            use = cls == 0
+            ef = {n: np.where(use, v, pe[n]) for n, v in ef.items()}
+            qf = {n: np.where(use, v, pq[n]) for n, v in qf.items()}
+        if tag is not None:
+            q = L_erg * pq['Q_ion_H0']
+            RAD_COVERAGE[tag] = [int(np.sum(cls == c)) for c in (0, 1, 2)] + [float(np.sum(q[cls == c])) for c in (0, 1, 2)]
+    result = {'L_' + n: L_erg * ef[n] for n, _, _ in ENERGY_BANDS}
+    result.update({n: L_erg * qf[n] for n, _, _ in PHOTON_RATE_BANDS})
     for combo_name, sub_names in COMBO_BANDS.items():
         result['L_' + combo_name] = sum(result['L_' + s] for s in sub_names)
-
-    # Bolometric
     result['L_bol'] = L_erg.copy()
-
     return result
 
 
 # ═══════════════════════════════════════════════════════════════
-# SECTION 2b: Spectral atmosphere LUT (replaces Planck when available)
+# SECTION 2b: Spectral atmosphere LUT (radiation source atlas9)
 # ═══════════════════════════════════════════════════════════════
 
 SPECTRAL_LUT = None  # filled lazily
@@ -424,100 +438,58 @@ SPECTRAL_LUT_PATH = os.environ.get('STELLA_SPECTRAL_LUT', os.path.join(os.path.d
                                   'data', 'lut', 'spectral_band_lut.hdf5'))
 
 def load_spectral_lut():
-    """Load pre-computed spectral band fractions from atmosphere models.
-
-    Returns: (log_Teff, logg, log_Z, energy_fracs, photon_rates_per_L)
-      or None if the LUT file doesn't exist.
-    """
+    """Spectral band LUT: (log_Teff, logg, log_Z, energy_fracs, photon_rates_per_L, has_data). Missing file is an error."""
     if not os.path.exists(SPECTRAL_LUT_PATH):
-        return None
+        raise FileNotFoundError('radiation source atlas9 needs the spectral LUT %s (build_spectral_lut.py)' % SPECTRAL_LUT_PATH)
     import h5py
     print(f"  Loading spectral LUT from {SPECTRAL_LUT_PATH}...", flush=True)
     with h5py.File(SPECTRAL_LUT_PATH, 'r') as f:
         log_Teff = f['log_Teff'][:]
         logg_arr = f['logg'][:]
         log_Z = np.log10(Z_SOLAR) + f['metallicity_MH'][:]   # scaled-solar [M/H] on the tables' Z_sun (the LUT's own Z axis used 0.0134)
-
-        energy_fracs = {}
-        for name, _, _ in ENERGY_BANDS:
-            energy_fracs[name] = f[f'energy_fracs/{name}'][:]
-
-        photon_rates = {}
-        for name, _, _ in PHOTON_RATE_BANDS:
-            photon_rates[name] = f[f'photon_rates_per_L/{name}'][:]
-
+        energy_fracs = {name: f[f'energy_fracs/{name}'][:] for name, _, _ in ENERGY_BANDS}
+        photon_rates = {name: f[f'photon_rates_per_L/{name}'][:] for name, _, _ in PHOTON_RATE_BANDS}
+        has_data = f['has_data'][:]
     print(f"    {len(log_Teff)} Teff x {len(logg_arr)} logg x {len(log_Z)} Z", flush=True)
-    return log_Teff, logg_arr, log_Z, energy_fracs, photon_rates
+    return log_Teff, logg_arr, log_Z, energy_fracs, photon_rates, has_data
 
 
 def get_spectral_lut():
-    """Lazy-load the spectral LUT. Returns None if not available."""
     global SPECTRAL_LUT
     if SPECTRAL_LUT is None:
         SPECTRAL_LUT = load_spectral_lut()
     return SPECTRAL_LUT
 
 
-def compute_radiation_from_spectral_lut(logTeff_arr, logL_arr, logg_arr=None, logZ_arr=None):
-    """Compute band luminosities from atmosphere-model spectral LUT.
+def spectral_coverage(points, axes, has_data):
+    """0 = all 8 interpolation corners are atmosphere models, 1 = a corner is a gap-filled LUT cell, 2 = off the grid"""
+    out = np.zeros(len(points), bool); idx = []
+    for d, g in enumerate(axes):
+        x = points[:, d]; out |= (x < g[0]) | (x > g[-1])
+        idx.append(np.clip(np.searchsorted(g, x) - 1, 0, len(g) - 2))
+    gap = np.zeros_like(out)
+    for i in (0, 1):
+        for j in (0, 1):
+            for k in (0, 1):
+                gap |= ~has_data[idx[0] + i, idx[1] + j, idx[2] + k]
+    return np.where(out, 2, np.where(gap, 1, 0))
 
-    Uses trilinear interpolation in (log_Teff, logg, log_Z) space.
-    Falls back to Planck for points outside the spectral grid.
 
-    Args:
-        logTeff_arr: log10(Teff/K) array
-        logL_arr:    log10(L/Lsun) array
-        logg_arr:    log10(g / cm/s^2) array (optional, default 4.0)
-        logZ_arr:    log10(Z) array (optional, default solar)
-
-    Returns: dict with same keys as compute_radiation_from_lut()
-    """
+def spectral_band_fractions(logTeff_arr, logg_arr, logZ_arr, clamp=False):
+    """LUT L_band/L_bol and Q_band/L_bol, trilinear in (log Teff, log g, log Z); off the grid linear extrapolation,
+    or the grid edge with clamp. Returns (energy_fracs, photon_rates_per_L, coverage class of the unclamped point)."""
     from scipy.interpolate import RegularGridInterpolator
-
-    spec = get_spectral_lut()
-    if spec is None:
-        return compute_radiation_from_lut(logTeff_arr, logL_arr)
-
-    log_Teff_grid, logg_grid, log_Z_grid, spec_efracs, spec_qrates = spec
-
-    N = len(logTeff_arr)
-    if logg_arr is None:
-        logg_arr = np.full(N, 4.0)
-    if logZ_arr is None:
-        logZ_arr = np.full(N, np.log10(Z_SOLAR))
-
-    L_erg = 10**logL_arr * L_sun
-    result = {}
-
-    # Build interpolation points
+    log_Teff_grid, logg_grid, log_Z_grid, spec_efracs, spec_qrates, has_data = get_spectral_lut()
+    axes = (log_Teff_grid, logg_grid, log_Z_grid)
     points = np.column_stack([logTeff_arr, logg_arr, logZ_arr])
-
-    # Interpolate energy fractions
-    for name, _, _ in ENERGY_BANDS:
-        interp = RegularGridInterpolator(
-            (log_Teff_grid, logg_grid, log_Z_grid),
-            spec_efracs[name],
-            method='linear', bounds_error=False, fill_value=None)
-        frac = interp(points)
-        frac = np.maximum(frac, 0.0)
-        result['L_' + name] = L_erg * frac
-
-    # Interpolate photon rates
-    for name, _, _ in PHOTON_RATE_BANDS:
-        interp = RegularGridInterpolator(
-            (log_Teff_grid, logg_grid, log_Z_grid),
-            spec_qrates[name],
-            method='linear', bounds_error=False, fill_value=None)
-        q_per_L = interp(points)
-        q_per_L = np.maximum(q_per_L, 0.0)
-        result[name] = L_erg * q_per_L
-
-    # Combination bands
-    for combo_name, sub_names in COMBO_BANDS.items():
-        result['L_' + combo_name] = sum(result['L_' + s] for s in sub_names)
-
-    result['L_bol'] = L_erg.copy()
-    return result
+    cls = spectral_coverage(points, axes, has_data)
+    if clamp:
+        points = np.column_stack([np.clip(points[:, d], g[0], g[-1]) for d, g in enumerate(axes)])
+    def interp(tab):
+        return np.maximum(RegularGridInterpolator(axes, tab, method='linear', bounds_error=False, fill_value=None)(points), 0.0)
+    ef = {name: interp(spec_efracs[name]) for name, _, _ in ENERGY_BANDS}
+    qf = {name: interp(spec_qrates[name]) for name, _, _ in PHOTON_RATE_BANDS}
+    return ef, qf, cls
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -715,13 +687,13 @@ def parsec_track_to_common(filepath):
     R_cm = 10**d['LOG_R']     # PARSEC LOG_R = log(R/cm)
     R_Rsun = R_cm / R_sun
 
-    rad = compute_radiation_from_lut(d['LOG_TE'], logL)
     v_wind = compute_v_wind(Teff, d['MASS'], R_Rsun)
 
     # Surface abundances: H, He, C, N, O from PARSEC; Ne, Mg, Si, S, Ca, Fe scaled from Z
     surface = np.zeros((len(Teff), N_ELEM))
     parsec_cols = {'H': 'H_SUP', 'He': 'HE_SUP', 'C': 'C_SUP', 'N': 'N_SUP', 'O': 'O_SUP'}
     Z_star = 1.0 - d['H_SUP'][0] - d['HE_SUP'][0]  # initial Z from first timestep
+    rad = compute_radiation_from_lut(d['LOG_TE'], logL, log_g(d['MASS'], R_cm), np.full(len(logL), np.log10(max(Z_star, 1e-12))), tag=filepath)
     for ie, elem in enumerate(TRACKED_ELEMENTS):
         col = parsec_cols.get(elem)
         if col and col in d:
@@ -798,7 +770,6 @@ def boost_track_to_common(filepath):
     log_Mdot = data[:, 5]      # log(Msun/yr)
 
     logTeff = np.log10(np.maximum(Teff, 1.0))
-    rad = compute_radiation_from_lut(logTeff, logL)
     v_wind = compute_v_wind(Teff, M_cur, R_Rsun)
 
     # Surface abundances from BoOST isotope columns
@@ -806,6 +777,7 @@ def boost_track_to_common(filepath):
     H_init = data[0, 26] + data[0, 27]  # sH1 + sH2
     He_init = data[0, 28] + data[0, 29]  # sHe3 + sHe4
     Z_star = 1.0 - H_init - He_init
+    rad = compute_radiation_from_lut(logTeff, logL, log_g(M_cur, R_Rsun * R_sun), np.full(len(logL), np.log10(max(Z_star, 1e-12))), tag=filepath)
     for ie, elem in enumerate(TRACKED_ELEMENTS):
         cols = BOOST_SURFACE_ELEM[elem]
         if cols:
@@ -909,7 +881,6 @@ def mist_track_to_common(filepath):
     Teff = 10**logTeff_arr
     R_Rsun_lin = 10**logR_Rsun
 
-    rad = compute_radiation_from_lut(logTeff_arr, logL)
     v_wind = compute_v_wind(Teff, M_cur, R_Rsun_lin)
 
     # Surface abundances
@@ -917,6 +888,7 @@ def mist_track_to_common(filepath):
     H_init = d['surface_h1'][0]
     He_init = d.get('surface_he3', np.zeros(1))[0] + d.get('surface_he4', np.zeros(1))[0]
     Z_star = 1.0 - H_init - He_init
+    rad = compute_radiation_from_lut(logTeff_arr, logL, log_g(M_cur, 10**logR_cm), np.full(len(logL), np.log10(max(Z_star, 1e-12))), tag=filepath)
     for ie, elem in enumerate(TRACKED_ELEMENTS):
         cols = MIST_SURFACE_ELEM.get(elem, [])
         if cols:
@@ -1041,7 +1013,6 @@ def parsec2_vms_track_to_common(filepath):
 
     Teff = 10**logTeff_arr
 
-    rad = compute_radiation_from_lut(logTeff_arr, logL)
     v_wind = compute_v_wind(Teff, M_cur, R_Rsun)
 
     # Surface abundances: 7 elements from .TAB, rest solar-scaled from initial Z
@@ -1049,6 +1020,7 @@ def parsec2_vms_track_to_common(filepath):
     H_init = d['Xsup'][0]
     He_init = d['Ysup'][0]
     Z_star = 1.0 - H_init - He_init
+    rad = compute_radiation_from_lut(logTeff_arr, logL, log_g(M_cur, R_cm), np.full(len(logL), np.log10(max(Z_star, 1e-12))), tag=filepath)
 
     for ie, elem in enumerate(TRACKED_ELEMENTS):
         cols = PARSEC2_SURFACE_COLS.get(elem, [])
@@ -2793,15 +2765,11 @@ def build_all(base_dir, output_file):
         parts.append("PARSEC_v1(fallback)")
         print(f"  Z={Z:.5f} → {' + '.join(parts)}")
 
-    # ── Initialize radiation LUT ──
-    # Try spectral atmosphere models first; fall back to Planck blackbody
-    spec = get_spectral_lut()
-    if spec is not None:
-        print("  Using spectral atmosphere model LUT (ATLAS9/PHOENIX)")
-    else:
-        print("  spectral_band_lut.hdf5 not found — using Planck blackbody")
-        print("  (Run build_spectral_lut.py --download --build to use atmosphere models)")
-        get_planck_lut()
+    # ── Radiation source (explicit, no fallback) ──
+    print(f"  Radiation source: {RADIATION['source']}" + (f", ATLAS9 lookup: {RADIATION['lookup']}" if RADIATION['source'] == 'atlas9' else ''))
+    get_planck_lut()
+    if RADIATION['source'] == 'atlas9':
+        get_spectral_lut()
 
     # ── Allocate output arrays ──
     shape = (N_Z, N_M, N_AGE)
@@ -3341,7 +3309,14 @@ def build_all(base_dir, output_file):
         f.attrs['mass_stitch_boost_lo'] = MASS_STITCH_BOOST_LO
         f.attrs['mass_stitch_boost_hi'] = MASS_STITCH_BOOST_HI
         f.attrs['band_edges_eV'] = ALL_BAND_EDGES_eV
-        f.attrs['radiation_source'] = 'Planck blackbody (TODO: replace with YBC atmosphere models)'
+        f.attrs['radiation_source'] = radiation_source_description()
+        f.attrs['radiation_source_option'] = RADIATION['source']
+        if RADIATION['source'] == 'atlas9':
+            f.attrs['atlas9_lookup_option'] = RADIATION['lookup']
+            f.attrs['spectral_lut_sha256'] = file_sha256(SPECTRAL_LUT_PATH)
+            cov = np.sum([v for v in RAD_COVERAGE.values()], axis=0) if RAD_COVERAGE else np.zeros(6)
+            f.attrs['radiation_coverage_track_points'] = np.array(cov[:3], dtype=np.int64)    # real models / gap-filled / off grid
+            f.attrs['radiation_coverage_Q_H0_planck_frac'] = cov[3:] / max(cov[3:].sum(), 1e-300)
         f.attrs['v_wind_prescription'] = 'Lamers+1995: 2.6*v_esc (T>21kK), 1.3*v_esc (10-21kK), 0.7*v_esc (cool)'
         f.attrs['E_ECSN_erg'] = 1e50       # weaker: degenerate O/Ne/Mg core
         f.attrs['E_CCSN_erg'] = 1e51       # canonical core-collapse
@@ -3454,9 +3429,38 @@ def verify(output_file):
                       f"M_CO={mco[iz, im120]:.1f}, M_He={mhe[iz, im120]:.1f}")
 
 
+def file_sha256(path):
+    import hashlib
+    with open(path, 'rb') as fh:
+        return hashlib.sha256(fh.read()).hexdigest()
+
+
+def radiation_source_description():
+    if RADIATION['source'] == 'planck':
+        return 'Planck blackbody at Teff'
+    look = {'legacy': 'at log g = 4 and Z = Z_sun for every track point, gap cells nearest-neighbour filled, '
+                      'linear extrapolation off the grid',
+            'clamp': 'at each track point\'s log g and Z clamped to the grid, gap cells nearest-neighbour filled',
+            'masked_planck': 'at each track point\'s log g and Z where all interpolation corners are atmosphere models, '
+                             'Planck blackbody elsewhere'}
+    return ('ATLAS9 (Castelli-Kurucz) / PHOENIX-ACES band LUT stellar/data/lut/spectral_band_lut.hdf5, trilinear in '
+            '(log Teff, log g, log Z), ' + look[RADIATION['lookup']])
+
+
 if __name__ == '__main__':
-    # usage: build_stellar_tables.py DATA_ROOT OUTPUT.hdf5   (DATA_ROOT: mist/ parsec1.2/ parsec2_vms/ boost/ + yield dirs)
-    base_dir = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.abspath(__file__))
-    output_file = sys.argv[2] if len(sys.argv) > 2 else os.path.join(base_dir, 'stellar_tables_unified.hdf5')
-    build_all(base_dir, output_file)
+    import argparse
+    ap = argparse.ArgumentParser(description='Build stellar_tables_unified.hdf5 (+ stellar_wind_cumulative.hdf5 next to it)')
+    ap.add_argument('data_root', help='mist/ parsec1.2/ parsec2_vms/ boost/ + yield dirs')
+    ap.add_argument('output', help='output HDF5')
+    ap.add_argument('--radiation-source', required=True, choices=RADIATION_SOURCES,
+                    help='band luminosities from atmosphere-model spectra (atlas9) or a blackbody (planck)')
+    ap.add_argument('--atlas9-lookup', choices=ATLAS9_LOOKUP,
+                    help='atlas9 only, required: legacy (log g = 4, Z_sun, extrapolate), clamp (point log g / Z, clamped '
+                         'to the grid), masked_planck (point log g / Z, Planck where the LUT has no model)')
+    a = ap.parse_args()
+    if (a.radiation_source == 'atlas9') != (a.atlas9_lookup is not None):
+        ap.error('--atlas9-lookup is required with --radiation-source atlas9 and not allowed otherwise')
+    RADIATION['source'], RADIATION['lookup'] = a.radiation_source, a.atlas9_lookup
+    output_file = a.output
+    build_all(a.data_root, output_file)
     verify(output_file)

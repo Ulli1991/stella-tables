@@ -169,6 +169,64 @@ def provenance_attrs(t):
     return not miss, f"missing={miss} radiation_source={t.f.attrs.get('radiation_source')}"
 
 
+def recompute_radiation(t, source, lookup):
+    """band outputs recomputed by the builder from the table's own Teff, L_bol, log g and Z"""
+    import build_stellar_tables as B
+    B.RADIATION.update(source=source, lookup=lookup)
+    lT, lL, lR, Mc = t['logTeff'], t['log_L_bol'], t['logR_cm'], t['M_current']
+    alive = (lL > -50) & (Mc > 0)
+    lZ = np.broadcast_to(np.log10(t.Z)[:, None, None], lT.shape)
+    r = B.compute_radiation_from_lut(lT[alive], lL[alive] - np.log10(B.L_sun), B.log_g(Mc[alive], 10 ** lR[alive]), lZ[alive])
+    return alive, r
+
+def radiation_residuals(t, source, lookup):
+    alive, r = recompute_radiation(t, source, lookup); out = {}
+    for key, ds in (('Q_ion_H0', 'log_Q_ion_H0'), ('L_LW', 'log_L_LW'), ('L_FUV', 'log_L_FUV')):
+        tab = t[ds][alive]; new = np.log10(np.maximum(r[key], 1e-300))
+        m = (tab > 20) & (new > 20)
+        out[key] = np.percentile(np.abs(new[m] - tab[m]), [50, 90])
+    return out
+
+@test
+def radiation_source_recorded(t):
+    """table names its radiation source and options; atlas9 builds record the LUT checksum and coverage"""
+    a = t.f.attrs; src = a.get('radiation_source_option')
+    if src not in ('atlas9', 'planck'): return False, f'radiation_source_option={src!r}'
+    ok = 'TODO' not in str(a.get('radiation_source', 'TODO'))
+    if src == 'atlas9':
+        import hashlib, build_stellar_tables as B
+        sha = hashlib.sha256(open(B.SPECTRAL_LUT_PATH, 'rb').read()).hexdigest()
+        ok &= a.get('atlas9_lookup_option') in ('legacy', 'clamp', 'masked_planck') and a.get('spectral_lut_sha256') == sha
+        ok &= len(a.get('radiation_coverage_track_points', [])) == 3 and abs(sum(a.get('radiation_coverage_Q_H0_planck_frac', [0])) - 1) < 1e-9
+    return bool(ok), f"{src} / {a.get('atlas9_lookup_option')}: {a.get('radiation_source')}"
+
+@test
+def radiation_no_silent_fallback(t):
+    """builder refuses to compute radiation without a source, and atlas9 without the LUT file"""
+    import build_stellar_tables as B
+    x = np.array([4.0]); errs = []
+    saved = dict(B.RADIATION), B.SPECTRAL_LUT, B.SPECTRAL_LUT_PATH
+    try:
+        for src, look, path in ((None, None, saved[2]), ('atlas9', None, saved[2]), ('atlas9', 'clamp', saved[2] + '.missing')):
+            B.RADIATION.update(source=src, lookup=look); B.SPECTRAL_LUT, B.SPECTRAL_LUT_PATH = None, path
+            try: B.compute_radiation_from_lut(x, x, x, x); errs.append('no error')
+            except (ValueError, FileNotFoundError) as e: errs.append(type(e).__name__)
+    finally:
+        B.RADIATION.update(saved[0]); B.SPECTRAL_LUT, B.SPECTRAL_LUT_PATH = saved[1], saved[2]
+    return 'no error' not in errs, 'no source / atlas9 without lookup / missing LUT -> %s' % errs
+
+@test
+def radiation_matches_recorded_source(t):
+    """Q_H0, L_LW, L_FUV recomputed from the table's (age-resampled) Teff/L/g/Z with the recorded source match the table
+    (median < 0.02 dex), and the other source is >= 10x further off"""
+    a = t.f.attrs; src, look = a['radiation_source_option'], a.get('atlas9_lookup_option')
+    same = radiation_residuals(t, src, look)
+    other = radiation_residuals(t, 'planck', None) if src == 'atlas9' else radiation_residuals(t, 'atlas9', 'clamp')
+    ok = max(v[0] for v in same.values()) < 0.02 and max(v[0] for v in other.values()) >= 10 * max(v[0] for v in same.values())
+    return ok, 'recorded: ' + ' '.join(f'{k} {v[0]:.4f}/{v[1]:.3f}' for k, v in same.items()) + \
+               ' | other source: ' + ' '.join(f'{k} {v[0]:.3f}' for k, v in other.items()) + ' (median/p90 |dex|)'
+
+
 def compare(a, b):
     fa, fb = h5py.File(a, 'r'), h5py.File(b, 'r')
     da, db = {}, {}
