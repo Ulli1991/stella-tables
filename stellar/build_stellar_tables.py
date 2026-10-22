@@ -374,11 +374,31 @@ def get_planck_lut():
         PLANCK_LUT = build_planck_lut()
     return PLANCK_LUT
 
-RADIATION_SOURCES = ('atlas9', 'planck', 'atlas9_nonionizing')
+RADIATION_SOURCES = ('atlas9', 'planck', 'atlas9_nonionizing', 'hotstar_stack')
 IONIZING_BANDS = ('ion_H0', 'ion_He0', 'ion_He1', 'ion_He2')
 ATLAS9_LOOKUP = ('legacy', 'clamp', 'masked_planck')
 RADIATION = {'source': None, 'lookup': None}   # set from the command line; no default
-RAD_COVERAGE = {}   # track file -> [n, Q_H0 planck, L_FUV, L_LW] x [real models, gap-filled, off grid]
+RAD_COVERAGE = {}   # track file -> {weight name: [sum per coverage class]}
+HOTSTAR_LUT_PATH = os.environ.get('STELLA_HOTSTAR_LUT', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'lut', 'hotstar_lut.hdf5'))
+HOTSTAR_LUT = None
+
+
+def get_hotstar_lut():
+    global HOTSTAR_LUT
+    if HOTSTAR_LUT is None:
+        if not os.path.exists(HOTSTAR_LUT_PATH):
+            raise FileNotFoundError('radiation source hotstar_stack needs %s (build_hotstar_lut.py)' % HOTSTAR_LUT_PATH)
+        import hotstar_radiation
+        HOTSTAR_LUT = hotstar_radiation.HotLUT(HOTSTAR_LUT_PATH)
+    return HOTSTAR_LUT
+
+
+def _rad_track(surface, log_Mdot, R_cm):
+    """surface X, C, N mass fractions, mass-loss rate and radius of each track point (hotstar_stack WR phases)"""
+    t = {'X': surface[:, TRACKED_ELEMENTS.index('H')], 'C': surface[:, TRACKED_ELEMENTS.index('C')],
+         'N': surface[:, TRACKED_ELEMENTS.index('N')], 'R_cm': R_cm}
+    if log_Mdot is not None: t['log_Mdot'] = log_Mdot
+    return t
 
 
 def log_g(M_Msun, R_cm):
@@ -393,7 +413,7 @@ def planck_band_fractions(logTeff_arr):
     return ef, qf
 
 
-def compute_radiation_from_lut(logTeff_arr, logL_arr, logg_arr, logZ_arr, tag=None):
+def compute_radiation_from_lut(logTeff_arr, logL_arr, logg_arr, logZ_arr, tag=None, track=None):
     """Band luminosities [erg/s] and photon rates [1/s] for track points (log L in Lsun).
 
     RADIATION['source'] = 'planck': blackbody at Teff.
@@ -405,6 +425,8 @@ def compute_radiation_from_lut(logTeff_arr, logL_arr, logg_arr, logZ_arr, tag=No
                           'clamp': the point's log g and Z, clamped to the grid edges; LUT as built
                           'masked_planck': the point's log g and Z; Planck wherever an interpolation corner is a
                                     gap-filled cell or the point is off the grid.
+                          'hotstar_stack': TLUSTY / ATLAS9 / PoWR OB He+ / PoWR WR / Gotberg, see hotstar_radiation.py;
+                                    track = dict(X, C, N surface mass fractions, log_Mdot [Msun/yr], R_cm) for WR phases.
     tag: track file; its coverage counts go to RAD_COVERAGE.
     """
     src, look = RADIATION['source'], RADIATION['lookup']
@@ -414,6 +436,18 @@ def compute_radiation_from_lut(logTeff_arr, logL_arr, logg_arr, logZ_arr, tag=No
     pe, pq = planck_band_fractions(logTeff_arr)
     if src == 'planck':
         ef, qf = pe, pq
+    elif src == 'hotstar_stack':
+        import hotstar_radiation as HS
+        E, Q, C = HS.hotstar_band_fractions(get_hotstar_lut(), logTeff_arr, logg_arr, logZ_arr, Z_SOLAR,
+                                            spectral_band_fractions, planck_band_fractions, track)
+        ef = {n: E[:, i] for i, (n, _, _) in enumerate(ENERGY_BANDS)}
+        qf = {n: Q[:, i] for i, (n, _, _) in enumerate(PHOTON_RATE_BANDS)}
+        if tag is not None:
+            wts = {'track_points': np.ones_like(L_erg), 'Q_H0': L_erg * qf['Q_ion_H0'], 'Q_He0': L_erg * qf['Q_He0'],
+                   'Q_He1': L_erg * qf['Q_He1'], 'L_FUV': L_erg * (ef['NUV_hi'] + ef['FUV_mid']), 'L_LW': L_erg * ef['LW']}
+            col = {'track_points': HS.GROUPS.index('Q_H0')}
+            RAD_COVERAGE[tag] = {k: [float(np.sum(w[C[:, col.get(k, HS.GROUPS.index(k) if k in HS.GROUPS else 0)] == c])) for c in range(4)]
+                                 for k, w in wts.items()}
     elif src == 'atlas9_nonionizing':
         ef, qf, cls = spectral_band_fractions(logTeff_arr, logg_arr, logZ_arr)
         use = cls == 0
@@ -430,9 +464,10 @@ def compute_radiation_from_lut(logTeff_arr, logL_arr, logg_arr, logZ_arr, tag=No
             use = cls == 0
             ef = {n: np.where(use, v, pe[n]) for n, v in ef.items()}
             qf = {n: np.where(use, v, pq[n]) for n, v in qf.items()}
-    if src != 'planck' and tag is not None:
-        wts = (np.ones_like(L_erg), L_erg * pq['Q_ion_H0'], L_erg * (ef['NUV_hi'] + ef['FUV_mid']), L_erg * ef['LW'])
-        RAD_COVERAGE[tag] = [[float(np.sum(wt[cls == c])) for c in (0, 1, 2)] for wt in wts]
+    if src not in ('planck', 'hotstar_stack') and tag is not None:
+        wts = {'track_points': np.ones_like(L_erg), 'Q_H0_planck': L_erg * pq['Q_ion_H0'],
+               'L_FUV': L_erg * (ef['NUV_hi'] + ef['FUV_mid']), 'L_LW': L_erg * ef['LW']}
+        RAD_COVERAGE[tag] = {k: [float(np.sum(w[cls == c])) for c in (0, 1, 2)] for k, w in wts.items()}
     result = {'L_' + n: L_erg * ef[n] for n, _, _ in ENERGY_BANDS}
     result.update({n: L_erg * qf[n] for n, _, _ in PHOTON_RATE_BANDS})
     for combo_name, sub_names in COMBO_BANDS.items():
@@ -705,7 +740,6 @@ def parsec_track_to_common(filepath):
     surface = np.zeros((len(Teff), N_ELEM))
     parsec_cols = {'H': 'H_SUP', 'He': 'HE_SUP', 'C': 'C_SUP', 'N': 'N_SUP', 'O': 'O_SUP'}
     Z_star = 1.0 - d['H_SUP'][0] - d['HE_SUP'][0]  # initial Z from first timestep
-    rad = compute_radiation_from_lut(d['LOG_TE'], logL, log_g(d['MASS'], R_cm), np.full(len(logL), np.log10(max(Z_star, 1e-12))), tag=filepath)
     for ie, elem in enumerate(TRACKED_ELEMENTS):
         col = parsec_cols.get(elem)
         if col and col in d:
@@ -728,6 +762,7 @@ def parsec_track_to_common(filepath):
     # Phase transition times (from raw track, full resolution)
     phase_transitions = extract_phase_transitions(d['AGE'], phase)
 
+    rad = compute_radiation_from_lut(d['LOG_TE'], logL, log_g(d['MASS'], R_cm), np.full(len(logL), np.log10(max(Z_star, 1e-12))), tag=filepath, track=_rad_track(surface, None, R_cm))
     result = {
         'age_yr': d['AGE'],
         'logL': logL,
@@ -789,7 +824,6 @@ def boost_track_to_common(filepath):
     H_init = data[0, 26] + data[0, 27]  # sH1 + sH2
     He_init = data[0, 28] + data[0, 29]  # sHe3 + sHe4
     Z_star = 1.0 - H_init - He_init
-    rad = compute_radiation_from_lut(logTeff, logL, log_g(M_cur, R_Rsun * R_sun), np.full(len(logL), np.log10(max(Z_star, 1e-12))), tag=filepath)
     for ie, elem in enumerate(TRACKED_ELEMENTS):
         cols = BOOST_SURFACE_ELEM[elem]
         if cols:
@@ -819,6 +853,7 @@ def boost_track_to_common(filepath):
 
     phase_transitions = extract_phase_transitions(age_yr, phase)
 
+    rad = compute_radiation_from_lut(logTeff, logL, log_g(M_cur, R_Rsun * R_sun), np.full(len(logL), np.log10(max(Z_star, 1e-12))), tag=filepath, track=_rad_track(surface, log_Mdot, R_Rsun * R_sun))
     result = {
         'age_yr': age_yr,
         'logL': logL,
@@ -900,7 +935,6 @@ def mist_track_to_common(filepath):
     H_init = d['surface_h1'][0]
     He_init = d.get('surface_he3', np.zeros(1))[0] + d.get('surface_he4', np.zeros(1))[0]
     Z_star = 1.0 - H_init - He_init
-    rad = compute_radiation_from_lut(logTeff_arr, logL, log_g(M_cur, 10**logR_cm), np.full(len(logL), np.log10(max(Z_star, 1e-12))), tag=filepath)
     for ie, elem in enumerate(TRACKED_ELEMENTS):
         cols = MIST_SURFACE_ELEM.get(elem, [])
         if cols:
@@ -922,6 +956,7 @@ def mist_track_to_common(filepath):
 
     phase_transitions = extract_phase_transitions(age_yr, phase)
 
+    rad = compute_radiation_from_lut(logTeff_arr, logL, log_g(M_cur, 10**logR_cm), np.full(len(logL), np.log10(max(Z_star, 1e-12))), tag=filepath, track=_rad_track(surface, log_Mdot, 10**logR_cm))
     result = {
         'age_yr': age_yr,
         'logL': logL,
@@ -1032,7 +1067,6 @@ def parsec2_vms_track_to_common(filepath):
     H_init = d['Xsup'][0]
     He_init = d['Ysup'][0]
     Z_star = 1.0 - H_init - He_init
-    rad = compute_radiation_from_lut(logTeff_arr, logL, log_g(M_cur, R_cm), np.full(len(logL), np.log10(max(Z_star, 1e-12))), tag=filepath)
 
     for ie, elem in enumerate(TRACKED_ELEMENTS):
         cols = PARSEC2_SURFACE_COLS.get(elem, [])
@@ -1094,6 +1128,7 @@ def parsec2_vms_track_to_common(filepath):
 
     phase_transitions = extract_phase_transitions(age_yr, phase)
 
+    rad = compute_radiation_from_lut(logTeff_arr, logL, log_g(M_cur, R_cm), np.full(len(logL), np.log10(max(Z_star, 1e-12))), tag=filepath, track=_rad_track(surface, log_Mdot, R_cm))
     result = {
         'age_yr': age_yr,
         'logL': logL,
@@ -2782,6 +2817,8 @@ def build_all(base_dir, output_file):
     get_planck_lut()
     if RADIATION['source'] != 'planck':
         get_spectral_lut()
+    if RADIATION['source'] == 'hotstar_stack':
+        get_hotstar_lut()
 
     # ── Allocate output arrays ──
     shape = (N_Z, N_M, N_AGE)
@@ -3126,6 +3163,8 @@ def build_all(base_dir, output_file):
             ds = f.create_dataset(ds_name, data=rad_data[key], **comp)
             ds.attrs['units'] = RAD_DESCRIPTIONS.get(key, 'log10')
             ds.attrs['shape'] = '(N_Z, N_M, N_age)'
+            if key == 'Q_He1' and RADIATION['source'] == 'hotstar_stack':
+                ds.attrs['note'] = 'order of magnitude: He+-ionizing output is set by the wind (PoWR OB Vd3 / WR grids)'
 
         # Structural evolution datasets
         # logL (log10 L/Lsun) and log_Mdot dropped: Gizmo doesn't load them —
@@ -3329,11 +3368,20 @@ def build_all(base_dir, output_file):
             if RADIATION['source'] == 'atlas9':
                 f.attrs['atlas9_lookup_option'] = RADIATION['lookup']
             f.attrs['spectral_lut_sha256'] = file_sha256(SPECTRAL_LUT_PATH)
-            cov = np.sum([v for v in RAD_COVERAGE.values()], axis=0) if RAD_COVERAGE else np.zeros((4, 3))
-            # fractions from track points whose lookup hits only models / a gap-filled cell / is off the grid
-            f.attrs['radiation_coverage_track_points'] = np.array(cov[0], dtype=np.int64)
-            for i, name in ((1, 'Q_H0_planck'), (2, 'L_FUV'), (3, 'L_LW')):
-                f.attrs['radiation_coverage_%s_frac' % name] = cov[i] / max(cov[i].sum(), 1e-300)
+            if RADIATION['source'] == 'hotstar_stack':
+                import hotstar_radiation as HS
+                f.attrs['hotstar_lut_sha256'] = file_sha256(HOTSTAR_LUT_PATH)
+                f.attrs['hotstar_rules'] = ('WR: X_surf < %g and log Teff > %g; PoWR WR (Rt, own v_inf and D) for Z >= %g Zsun, Gotberg+18 below; '
+                                            'TLUSTY >= %g K blended with ATLAS9 to %g K; Q_He1 from PoWR OB Vd3 (order of magnitude)'
+                                            % (HS.WR_X_MAX, HS.WR_LOGTEFF_MIN, HS.GOTBERG_BELOW_ZREL, HS.TLUSTY_SEAM[0], HS.TLUSTY_SEAM[1]))
+            names = sorted({k for v in RAD_COVERAGE.values() for k in v})
+            cov = {k: np.sum([v[k] for v in RAD_COVERAGE.values()], axis=0) for k in names}
+            # share of catalogue track points (and of each weighted band) per coverage class
+            f.attrs['radiation_coverage_classes'] = ('model, blended, clamped, blackbody' if RADIATION['source'] == 'hotstar_stack'
+                                                     else 'model, gap-filled LUT cell, off grid')
+            for k in names:
+                if k == 'track_points': f.attrs['radiation_coverage_track_points'] = np.array(cov[k], dtype=np.int64)
+                else: f.attrs['radiation_coverage_%s_frac' % k] = cov[k] / max(cov[k].sum(), 1e-300)
         f.attrs['v_wind_prescription'] = 'Lamers+1995: 2.6*v_esc (T>21kK), 1.3*v_esc (10-21kK), 0.7*v_esc (cool)'
         f.attrs['E_ECSN_erg'] = 1e50       # weaker: degenerate O/Ne/Mg core
         f.attrs['E_CCSN_erg'] = 1e51       # canonical core-collapse
@@ -3455,6 +3503,11 @@ def file_sha256(path):
 def radiation_source_description():
     if RADIATION['source'] == 'planck':
         return 'Planck blackbody at Teff'
+    if RADIATION['source'] == 'hotstar_stack':
+        return ('model atmospheres per band: TLUSTY BSTAR2006/OSTAR2002 15-55 kK (blended with ATLAS9 over 15-20 kK and into a '
+                'blackbody over 55-65 kK), ATLAS9 below, '
+                'PoWR OB Vd3 log Q(HeII) for He+-ionizing photons of O/B stars, PoWR WR grids (transformed radius) and Gotberg+2018 '
+                'stripped stars (Z < 0.1 Zsun) for WR phases, blackbody only off every grid; see hotstar_radiation.py')
     if RADIATION['source'] == 'atlas9_nonionizing':
         return ('ionizing bands and photon rates (> 13.6 eV): Planck blackbody at Teff; non-ionizing bands: ATLAS9 '
                 '(Castelli-Kurucz) / PHOENIX-ACES band LUT stellar/data/lut/spectral_band_lut.hdf5, trilinear in (log Teff, '
@@ -3476,7 +3529,8 @@ if __name__ == '__main__':
     ap.add_argument('output', help='output HDF5')
     ap.add_argument('--radiation-source', required=True, choices=RADIATION_SOURCES,
                     help='band luminosities from atmosphere-model spectra (atlas9), a blackbody (planck), or blackbody '
-                         'for ionizing and atmospheres (masked as masked_planck) for non-ionizing bands (atlas9_nonionizing)')
+                         'for ionizing and atmospheres (masked as masked_planck) for non-ionizing bands (atlas9_nonionizing), '
+                         'or the hot-star atmosphere stack (hotstar_stack: TLUSTY, ATLAS9, PoWR OB/WR, Gotberg+18)')
     ap.add_argument('--atlas9-lookup', choices=ATLAS9_LOOKUP,
                     help='atlas9 only, required: legacy (log g = 4, Z_sun, extrapolate), clamp (point log g / Z, clamped '
                          'to the grid), masked_planck (point log g / Z, Planck where the LUT has no model)')

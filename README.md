@@ -74,6 +74,12 @@ Band luminosities and ionizing photon rates of every track point come from one e
 attributes (`radiation_source*`, `atlas9_lookup_option`, `spectral_lut_sha256`).
 
 - `planck`: blackbody at Teff.
+- `hotstar_stack`: model atmospheres per band (`stellar/hotstar_radiation.py`, LUT `stellar/data/lut/hotstar_lut.hdf5`
+  from `stellar/build_hotstar_lut.py`): TLUSTY BSTAR2006/OSTAR2002 for 15-55 kK (blended with ATLAS9 over 15-20 kK and
+  into a blackbody over 55-65 kK), ATLAS9 below, He+-ionizing photons of O/B stars from the PoWR OB Vd3 log Q(HeII)
+  tables (order of magnitude), WR phases (surface X < 0.4, log Teff > 4.45) from the PoWR WR grids through the
+  transformed radius (Z >= 0.1 Zsun, lowest grid 0.07 Zsun) or from Gotberg+2018 stripped stars (Z < 0.1 Zsun),
+  blackbody only off every grid. Coverage per band (model / blended / clamped / blackbody) in `radiation_coverage_*`.
 - `atlas9_nonionizing`: ionizing bands and photon rates (> 13.6 eV) blackbody; non-ionizing bands from the LUT below
   at the point's log g and Z, blackbody where the LUT has no model (as `masked_planck`).
 - `atlas9`: `stellar/data/lut/spectral_band_lut.hdf5` (ATLAS9 Castelli-Kurucz >= 3500 K, PHOENIX-ACES below), trilinear

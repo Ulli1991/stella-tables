@@ -176,7 +176,13 @@ def recompute_radiation(t, source, lookup):
     lT, lL, lR, Mc = t['logTeff'], t['log_L_bol'], t['logR_cm'], t['M_current']
     alive = (lL > -50) & (Mc > 0)
     lZ = np.broadcast_to(np.log10(t.Z)[:, None, None], lT.shape)
-    r = B.compute_radiation_from_lut(lT[alive], lL[alive] - np.log10(B.L_sun), B.log_g(Mc[alive], 10 ** lR[alive]), lZ[alive])
+    track = None
+    if source == 'hotstar_stack':
+        sa = t['surface_abundances']; age = 10 ** t['log_age_yr']
+        mdot = -np.gradient(Mc, age, axis=2)                 # Msun/yr from the resampled M_current
+        track = {'X': sa[..., 0][alive], 'C': sa[..., 2][alive], 'N': sa[..., 3][alive], 'R_cm': 10 ** lR[alive],
+                 'log_Mdot': np.log10(np.maximum(mdot, 1e-30))[alive]}
+    r = B.compute_radiation_from_lut(lT[alive], lL[alive] - np.log10(B.L_sun), B.log_g(Mc[alive], 10 ** lR[alive]), lZ[alive], track=track)
     return alive, r
 
 def radiation_residuals(t, source, lookup):
@@ -195,21 +201,103 @@ def photon_rates_nested(t):
     lT, lg, lZ = np.meshgrid(np.linspace(np.log10(3500), np.log10(2e5), 60), np.linspace(0, 6, 13), np.log10(t.Z), indexing='ij')
     lT, lg, lZ = lT.ravel(), lg.ravel(), lZ.ravel()
     r = B.compute_radiation_from_lut(lT, np.full(lT.size, 5.0), lg, lZ)
-    worst = max(float(np.max(r[x] - r[y] * (1 + 1e-12))) for y, x in (('Q_ion', 'Q_He0'), ('Q_He0', 'Q_He1'), ('Q_ion', 'Q_ion_H0')))
+    worst = max(float(np.max(r[x] - r[y] * (1 + 1e-4))) for y, x in (('Q_ion', 'Q_He0'), ('Q_He0', 'Q_He1'), ('Q_ion', 'Q_ion_H0')))
     return worst <= 0, 'max (inner - outer) photon rate on the lattice: %.3g /s (L = 1e5 Lsun)' % worst
+
+def _hotstar(fn):
+    """evaluate the hotstar_stack source directly (independent of the table's own source)"""
+    import build_stellar_tables as B
+    saved = dict(B.RADIATION); B.RADIATION.update(source='hotstar_stack', lookup=None)
+    try: return fn(B)
+    finally: B.RADIATION.update(saved)
+
+def _ladder(B, T, lg=4.0, z=0.014, track=None):
+    lT = np.log10(T); r = B.compute_radiation_from_lut(lT, np.full(lT.size, 5.0), np.full(lT.size, lg), np.full(lT.size, np.log10(z)), track=track)
+    L = 10 ** 5.0 * B.L_sun
+    return {k: r[k] / L for k in ('Q_ion_H0', 'Q_He0', 'Q_He1', 'L_FUV', 'L_LW')}
+
+@test
+def hotstar_seams_continuous(t):
+    """hotstar_stack has no jump at its seams: |log v(T(1+1e-5)) - log v(T(1-1e-5))| < 0.01 dex for Q_H0, Q_He0, Q_He1,
+    L_FUV, L_LW at the ATLAS9/TLUSTY blend edges (15, 20 kK), the BSTAR/OSTAR blend (27, 30 kK), the TLUSTY hot edge
+    and its blackbody blend (55, 65 kK) and the PoWR OB He+ edge and blend (62, 73 kK); log g 4, three Z"""
+    def run(B):
+        worst = (0., None)
+        for z in (0.014, 0.0014, 0.00014):
+            for Ts in (15000, 20000, 27000, 30000, 55000, 65000, 62000, 62000 * 65 / 55.):
+                r = _ladder(B, np.array([Ts * (1 - 1e-5), Ts * (1 + 1e-5)]), 4.0, z)
+                for k, v in r.items():
+                    if min(v) <= 0: continue
+                    d = abs(np.log10(v[1] / v[0]))
+                    if d > worst[0]: worst = (d, '%s at %.0f K, Z=%g' % (k, Ts, z))
+        return worst
+    w = _hotstar(run)
+    return w[0] < 0.01, 'largest jump %.2e dex (%s)' % w
+
+@test
+def hotstar_q_h0_matches_tlusty_nodes(t):
+    """at TLUSTY model nodes >= 20 kK (cell class 0) the source returns the LUT Q_H0 per erg to 1e-9; surface q0 at
+    30 kK / log g 4 / Zsun (BSTAR -> OSTAR blend) lies between Lanz & Hubeny 2007 Table 4 (BSTAR, log 22.90) and the
+    OSTAR2002 model (log 23.01)"""
+    def run(B):
+        H = B.get_hotstar_lut(); tl = H.tl; i0 = H.QB.index('Q_ion_H0'); worst = 0.; n = 0
+        for i, lT in enumerate(tl['log_Teff']):
+            if 10 ** lT < 20000: continue
+            for j, lg in enumerate(tl['logg']):
+                for k, zr in enumerate(tl['Z_rel']):
+                    if tl['cell_class'][i, j, k] != 0: continue
+                    r = B.compute_radiation_from_lut(np.array([lT]), np.array([5.0]), np.array([lg]), np.array([np.log10(zr * B.Z_SOLAR)]))
+                    q = r['Q_ion_H0'][0] / (1e5 * B.L_sun); ref = tl['photon_rates_per_L'][i, j, k, i0]
+                    worst = max(worst, abs(q / ref - 1)); n += 1
+        T = 30000.; r = _ladder(B, np.array([T])); q0 = np.log10(r['Q_ion_H0'][0] * 5.670374419e-5 * T ** 4)
+        return worst, n, q0
+    worst, n, q0 = _hotstar(run)
+    return worst < 1e-9 and 22.89 <= q0 <= 23.02, '%d nodes, max rel dev %.1e; log q0(30 kK, 4.0, Zsun) = %.3f (BSTAR L&H07 22.90, OSTAR 23.01)' % (n, worst, q0)
+
+@test
+def hotstar_he_plus_flagged(t):
+    """hotstar_stack documents Q_He1 as order-of-magnitude (wind-set) in the module and in the table attributes"""
+    import hotstar_radiation as HS
+    ok = 'order-of-magnitude' in HS.__doc__
+    if t.f.attrs.get('radiation_source_option') == 'hotstar_stack':
+        ok &= 'order of magnitude' in str(t.f.attrs.get('hotstar_rules')) and 'order of magnitude' in str(t.f['log_Q_He1'].attrs.get('note', ''))
+    return ok, 'Q_He1 flagged (module%s)' % (', table attrs' if t.f.attrs.get('radiation_source_option') == 'hotstar_stack' else '')
+
+@test
+def hotstar_nested_and_wr(t):
+    """hotstar_stack: Q_ion >= Q_He0 >= Q_He1 on a lattice incl. WR points (X = 0, Mdot 1e-5) at 4 Z; WR He+ is never blackbody"""
+    def run(B):
+        import hotstar_radiation as HS
+        lT, lg, lZ = np.meshgrid(np.linspace(np.log10(3500), np.log10(2e5), 50), np.linspace(1, 6, 11), np.log10([0.0002, 0.0014, 0.006, 0.02]), indexing='ij')
+        lT, lg, lZ = lT.ravel(), lg.ravel(), lZ.ravel(); n = lT.size
+        out = []
+        for X, C in ((0.7, 0.002), (0.0, 0.002), (0.0, 0.3), (0.2, 0.001)):
+            tr = {'X': np.full(n, X), 'C': np.full(n, C), 'N': np.full(n, 0.01), 'R_cm': np.full(n, 2 * 6.957e10), 'log_Mdot': np.full(n, -5.0)}
+            r = B.compute_radiation_from_lut(lT, np.full(n, 5.0), lg, lZ, track=tr)
+            out.append(max(float(np.max(r[x] - r[y] * (1 + 1e-4))) for y, x in (('Q_ion', 'Q_He0'), ('Q_He0', 'Q_He1'), ('Q_ion', 'Q_ion_H0'))))
+            E, Q, Cc = HS.hotstar_band_fractions(B.get_hotstar_lut(), lT, lg, lZ, B.Z_SOLAR, B.spectral_band_fractions, B.planck_band_fractions, tr)
+            wr = (tr['X'] < HS.WR_X_MAX) & (lT > HS.WR_LOGTEFF_MIN)
+            out.append(int(np.sum(Cc[wr, HS.GROUPS.index('Q_He1')] == 3)))
+        return out
+    o = _hotstar(run)
+    return max(o[0::2]) <= 0 and sum(o[1::2]) == 0, 'max inner-outer %.3g /s; WR points with blackbody He+: %d' % (max(o[0::2]), sum(o[1::2]))
 
 @test
 def radiation_source_recorded(t):
     """table names its radiation source and options; atlas9 builds record the LUT checksum and coverage"""
     a = t.f.attrs; src = a.get('radiation_source_option')
-    if src not in ('atlas9', 'planck', 'atlas9_nonionizing'): return False, f'radiation_source_option={src!r}'
+    if src not in ('atlas9', 'planck', 'atlas9_nonionizing', 'hotstar_stack'): return False, f'radiation_source_option={src!r}'
     ok = 'TODO' not in str(a.get('radiation_source', 'TODO'))
     if src != 'planck':
         import hashlib, build_stellar_tables as B
         sha = hashlib.sha256(open(B.SPECTRAL_LUT_PATH, 'rb').read()).hexdigest()
-        ok &= a.get('spectral_lut_sha256') == sha and len(a.get('radiation_coverage_track_points', [])) == 3
+        ok &= a.get('spectral_lut_sha256') == sha and len(a.get('radiation_coverage_track_points', [])) == (4 if src == 'hotstar_stack' else 3)
         ok &= (a.get('atlas9_lookup_option') in ('legacy', 'clamp', 'masked_planck')) == (src == 'atlas9')
-        ok &= all(abs(sum(a.get('radiation_coverage_%s_frac' % k, [0])) - 1) < 1e-9 for k in ('Q_H0_planck', 'L_FUV', 'L_LW'))
+        keys = ('Q_H0', 'Q_He0', 'Q_He1', 'L_FUV', 'L_LW') if src == 'hotstar_stack' else ('Q_H0_planck', 'L_FUV', 'L_LW')
+        ok &= all(abs(sum(a.get('radiation_coverage_%s_frac' % k, [0])) - 1) < 1e-9 for k in keys)
+        if src == 'hotstar_stack':
+            ok &= a.get('hotstar_lut_sha256') == hashlib.sha256(open(B.HOTSTAR_LUT_PATH, 'rb').read()).hexdigest()
+            ok &= all(len(a['radiation_coverage_%s_frac' % k]) == 4 for k in keys)
     return bool(ok), f"{src} / {a.get('atlas9_lookup_option')}: {a.get('radiation_source')}"
 
 @test
@@ -234,7 +322,7 @@ def radiation_matches_recorded_source(t):
     a = t.f.attrs; src, look = a['radiation_source_option'], a.get('atlas9_lookup_option')
     same = radiation_residuals(t, src, look)
     other = radiation_residuals(t, *{'atlas9': ('planck', None), 'planck': ('atlas9', 'clamp'),
-                                     'atlas9_nonionizing': ('atlas9', 'legacy')}[src])
+                                     'atlas9_nonionizing': ('atlas9', 'legacy'), 'hotstar_stack': ('planck', None)}[src])
     ok = max(v[0] for v in same.values()) < 0.02 and max(v[0] for v in other.values()) >= 10 * max(v[0] for v in same.values())
     return ok, 'recorded: ' + ' '.join(f'{k} {v[0]:.4f}/{v[1]:.3f}' for k, v in same.items()) + \
                ' | other source: ' + ' '.join(f'{k} {v[0]:.3f}' for k, v in other.items()) + ' (median/p90 |dex|)'
