@@ -191,13 +191,14 @@ def radiation_residuals(t, source, lookup):
 def radiation_source_recorded(t):
     """table names its radiation source and options; atlas9 builds record the LUT checksum and coverage"""
     a = t.f.attrs; src = a.get('radiation_source_option')
-    if src not in ('atlas9', 'planck'): return False, f'radiation_source_option={src!r}'
+    if src not in ('atlas9', 'planck', 'atlas9_nonionizing'): return False, f'radiation_source_option={src!r}'
     ok = 'TODO' not in str(a.get('radiation_source', 'TODO'))
-    if src == 'atlas9':
+    if src != 'planck':
         import hashlib, build_stellar_tables as B
         sha = hashlib.sha256(open(B.SPECTRAL_LUT_PATH, 'rb').read()).hexdigest()
-        ok &= a.get('atlas9_lookup_option') in ('legacy', 'clamp', 'masked_planck') and a.get('spectral_lut_sha256') == sha
-        ok &= len(a.get('radiation_coverage_track_points', [])) == 3 and abs(sum(a.get('radiation_coverage_Q_H0_planck_frac', [0])) - 1) < 1e-9
+        ok &= a.get('spectral_lut_sha256') == sha and len(a.get('radiation_coverage_track_points', [])) == 3
+        ok &= (a.get('atlas9_lookup_option') in ('legacy', 'clamp', 'masked_planck')) == (src == 'atlas9')
+        ok &= all(abs(sum(a.get('radiation_coverage_%s_frac' % k, [0])) - 1) < 1e-9 for k in ('Q_H0_planck', 'L_FUV', 'L_LW'))
     return bool(ok), f"{src} / {a.get('atlas9_lookup_option')}: {a.get('radiation_source')}"
 
 @test
@@ -221,7 +222,8 @@ def radiation_matches_recorded_source(t):
     (median < 0.02 dex), and the other source is >= 10x further off"""
     a = t.f.attrs; src, look = a['radiation_source_option'], a.get('atlas9_lookup_option')
     same = radiation_residuals(t, src, look)
-    other = radiation_residuals(t, 'planck', None) if src == 'atlas9' else radiation_residuals(t, 'atlas9', 'clamp')
+    other = radiation_residuals(t, *{'atlas9': ('planck', None), 'planck': ('atlas9', 'clamp'),
+                                     'atlas9_nonionizing': ('atlas9', 'legacy')}[src])
     ok = max(v[0] for v in same.values()) < 0.02 and max(v[0] for v in other.values()) >= 10 * max(v[0] for v in same.values())
     return ok, 'recorded: ' + ' '.join(f'{k} {v[0]:.4f}/{v[1]:.3f}' for k, v in same.items()) + \
                ' | other source: ' + ' '.join(f'{k} {v[0]:.3f}' for k, v in other.items()) + ' (median/p90 |dex|)'

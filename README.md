@@ -74,6 +74,8 @@ Band luminosities and ionizing photon rates of every track point come from one e
 attributes (`radiation_source*`, `atlas9_lookup_option`, `spectral_lut_sha256`).
 
 - `planck`: blackbody at Teff.
+- `atlas9_nonionizing`: ionizing bands and photon rates (> 13.6 eV) blackbody; non-ionizing bands from the LUT below
+  at the point's log g and Z, blackbody where the LUT has no model (as `masked_planck`).
 - `atlas9`: `stellar/data/lut/spectral_band_lut.hdf5` (ATLAS9 Castelli-Kurucz >= 3500 K, PHOENIX-ACES below), trilinear
   in log Teff, log g, log Z ([M/H] = log Z/Z_sun). The LUT spans 3.5-50 kK and log g 0-5 and has no models for hot
   low-gravity stars; its empty cells were filled with the nearest model when it was built (`has_data` marks the
@@ -83,8 +85,8 @@ attributes (`radiation_source*`, `atlas9_lookup_option`, `spectral_lut_sha256`).
   - `masked_planck`: the point's log g and Z; blackbody wherever an interpolation corner is a filled cell or the
     point is off the grid.
 
-  `radiation_coverage_*` attributes give the share of track points (and of their blackbody Q_H0) that hit only
-  models, a filled cell, or nothing. Default `atlas9` / `legacy`.
+  `radiation_coverage_*` attributes give the share of track points (and of their blackbody Q_H0, L_FUV, L_LW)
+  that hit only models, a filled cell, or nothing. Default `atlas9` / `legacy`.
 
 ## Solar composition
 

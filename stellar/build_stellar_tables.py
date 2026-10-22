@@ -370,10 +370,11 @@ def get_planck_lut():
         PLANCK_LUT = build_planck_lut()
     return PLANCK_LUT
 
-RADIATION_SOURCES = ('atlas9', 'planck')
+RADIATION_SOURCES = ('atlas9', 'planck', 'atlas9_nonionizing')
+IONIZING_BANDS = ('ion_H0', 'ion_He0', 'ion_He1', 'ion_He2')
 ATLAS9_LOOKUP = ('legacy', 'clamp', 'masked_planck')
 RADIATION = {'source': None, 'lookup': None}   # set from the command line; no default
-RAD_COVERAGE = {}   # track file -> [n_real, n_gapfilled, n_outside, Q_planck_real, Q_planck_gapfilled, Q_planck_outside]
+RAD_COVERAGE = {}   # track file -> [n, Q_H0 planck, L_FUV, L_LW] x [real models, gap-filled, off grid]
 
 
 def log_g(M_Msun, R_cm):
@@ -392,6 +393,8 @@ def compute_radiation_from_lut(logTeff_arr, logL_arr, logg_arr, logZ_arr, tag=No
     """Band luminosities [erg/s] and photon rates [1/s] for track points (log L in Lsun).
 
     RADIATION['source'] = 'planck': blackbody at Teff.
+                          'atlas9_nonionizing': ionizing bands and photon rates blackbody; non-ionizing bands from the
+                                    LUT at the point's log g and Z, blackbody where the LUT has no model (as masked_planck).
                           'atlas9': spectral LUT (ATLAS9 / PHOENIX), trilinear in (log Teff, log g, log Z), with
     RADIATION['lookup'] = 'legacy': log g = 4 and Z = Z_sun for every point, LUT as built (gap cells nearest-neighbour
                                     filled), linear extrapolation off the grid (all builds before this option)
@@ -407,6 +410,11 @@ def compute_radiation_from_lut(logTeff_arr, logL_arr, logg_arr, logZ_arr, tag=No
     pe, pq = planck_band_fractions(logTeff_arr)
     if src == 'planck':
         ef, qf = pe, pq
+    elif src == 'atlas9_nonionizing':
+        ef, qf, cls = spectral_band_fractions(logTeff_arr, logg_arr, logZ_arr)
+        use = cls == 0
+        ef = {n: (pe[n] if n in IONIZING_BANDS else np.where(use, v, pe[n])) for n, v in ef.items()}
+        qf = pq
     else:
         if look not in ATLAS9_LOOKUP:
             raise ValueError('ATLAS9 lookup not set (one of %s)' % (ATLAS9_LOOKUP,))
@@ -418,9 +426,9 @@ def compute_radiation_from_lut(logTeff_arr, logL_arr, logg_arr, logZ_arr, tag=No
             use = cls == 0
             ef = {n: np.where(use, v, pe[n]) for n, v in ef.items()}
             qf = {n: np.where(use, v, pq[n]) for n, v in qf.items()}
-        if tag is not None:
-            q = L_erg * pq['Q_ion_H0']
-            RAD_COVERAGE[tag] = [int(np.sum(cls == c)) for c in (0, 1, 2)] + [float(np.sum(q[cls == c])) for c in (0, 1, 2)]
+    if src != 'planck' and tag is not None:
+        wts = (np.ones_like(L_erg), L_erg * pq['Q_ion_H0'], L_erg * (ef['NUV_hi'] + ef['FUV_mid']), L_erg * ef['LW'])
+        RAD_COVERAGE[tag] = [[float(np.sum(wt[cls == c])) for c in (0, 1, 2)] for wt in wts]
     result = {'L_' + n: L_erg * ef[n] for n, _, _ in ENERGY_BANDS}
     result.update({n: L_erg * qf[n] for n, _, _ in PHOTON_RATE_BANDS})
     for combo_name, sub_names in COMBO_BANDS.items():
@@ -2768,7 +2776,7 @@ def build_all(base_dir, output_file):
     # ── Radiation source (explicit, no fallback) ──
     print(f"  Radiation source: {RADIATION['source']}" + (f", ATLAS9 lookup: {RADIATION['lookup']}" if RADIATION['source'] == 'atlas9' else ''))
     get_planck_lut()
-    if RADIATION['source'] == 'atlas9':
+    if RADIATION['source'] != 'planck':
         get_spectral_lut()
 
     # ── Allocate output arrays ──
@@ -3311,12 +3319,15 @@ def build_all(base_dir, output_file):
         f.attrs['band_edges_eV'] = ALL_BAND_EDGES_eV
         f.attrs['radiation_source'] = radiation_source_description()
         f.attrs['radiation_source_option'] = RADIATION['source']
-        if RADIATION['source'] == 'atlas9':
-            f.attrs['atlas9_lookup_option'] = RADIATION['lookup']
+        if RADIATION['source'] != 'planck':
+            if RADIATION['source'] == 'atlas9':
+                f.attrs['atlas9_lookup_option'] = RADIATION['lookup']
             f.attrs['spectral_lut_sha256'] = file_sha256(SPECTRAL_LUT_PATH)
-            cov = np.sum([v for v in RAD_COVERAGE.values()], axis=0) if RAD_COVERAGE else np.zeros(6)
-            f.attrs['radiation_coverage_track_points'] = np.array(cov[:3], dtype=np.int64)    # real models / gap-filled / off grid
-            f.attrs['radiation_coverage_Q_H0_planck_frac'] = cov[3:] / max(cov[3:].sum(), 1e-300)
+            cov = np.sum([v for v in RAD_COVERAGE.values()], axis=0) if RAD_COVERAGE else np.zeros((4, 3))
+            # fractions from track points whose lookup hits only models / a gap-filled cell / is off the grid
+            f.attrs['radiation_coverage_track_points'] = np.array(cov[0], dtype=np.int64)
+            for i, name in ((1, 'Q_H0_planck'), (2, 'L_FUV'), (3, 'L_LW')):
+                f.attrs['radiation_coverage_%s_frac' % name] = cov[i] / max(cov[i].sum(), 1e-300)
         f.attrs['v_wind_prescription'] = 'Lamers+1995: 2.6*v_esc (T>21kK), 1.3*v_esc (10-21kK), 0.7*v_esc (cool)'
         f.attrs['E_ECSN_erg'] = 1e50       # weaker: degenerate O/Ne/Mg core
         f.attrs['E_CCSN_erg'] = 1e51       # canonical core-collapse
@@ -3438,6 +3449,11 @@ def file_sha256(path):
 def radiation_source_description():
     if RADIATION['source'] == 'planck':
         return 'Planck blackbody at Teff'
+    if RADIATION['source'] == 'atlas9_nonionizing':
+        return ('ionizing bands and photon rates (> 13.6 eV): Planck blackbody at Teff; non-ionizing bands: ATLAS9 '
+                '(Castelli-Kurucz) / PHOENIX-ACES band LUT stellar/data/lut/spectral_band_lut.hdf5, trilinear in (log Teff, '
+                'log g, log Z) at each track point\'s log g and Z where all interpolation corners are atmosphere models, '
+                'Planck blackbody elsewhere')
     look = {'legacy': 'at log g = 4 and Z = Z_sun for every track point, gap cells nearest-neighbour filled, '
                       'linear extrapolation off the grid',
             'clamp': 'at each track point\'s log g and Z clamped to the grid, gap cells nearest-neighbour filled',
@@ -3453,7 +3469,8 @@ if __name__ == '__main__':
     ap.add_argument('data_root', help='mist/ parsec1.2/ parsec2_vms/ boost/ + yield dirs')
     ap.add_argument('output', help='output HDF5')
     ap.add_argument('--radiation-source', required=True, choices=RADIATION_SOURCES,
-                    help='band luminosities from atmosphere-model spectra (atlas9) or a blackbody (planck)')
+                    help='band luminosities from atmosphere-model spectra (atlas9), a blackbody (planck), or blackbody '
+                         'for ionizing and atmospheres (masked as masked_planck) for non-ionizing bands (atlas9_nonionizing)')
     ap.add_argument('--atlas9-lookup', choices=ATLAS9_LOOKUP,
                     help='atlas9 only, required: legacy (log g = 4, Z_sun, extrapolate), clamp (point log g / Z, clamped '
                          'to the grid), masked_planck (point log g / Z, Planck where the LUT has no model)')
