@@ -16,9 +16,20 @@ Per track point, in this order:
       in log Z between 1/31 and 1 Zsun), blended in log q with the ATLAS9 side over TLUSTY_SEAM and into the blackbody
       over 62-73 kK; the He+ energy bands follow that rate.
   cooler stars: ATLAS9 where every interpolation corner is a model, blackbody elsewhere (as masked_planck).
+  CMFGEN wind models (Martins & Palacios 2017-2022, Martins+2025 Z-scaled VMS winds; Z = 0.01-1 Zsun) replace, for
+      non-WR stars >= 20 kK, the parts the stack above takes from filled TLUSTY cells (Eddington-limit holes, weight f)
+      and from the hot-edge blackbody (weight b): every band -> (1 - W) old + W cmfgen, W = A ((1 - b) f + b). A is the
+      CMFGEN availability: per Z set linear on a Delaunay mesh of the scattered models in (log Teff / 0.025, log g / 0.25),
+      outside the hull the nearest hull point with availability falling to 0 at CMF_EXTRAP (0.25 dex in log g) outside;
+      linear in log Z between the bracketing sets, availability they leave taken from the next sets outward (lower Z
+      first): this is how solar-Z very massive stars get the LMC/SMC wind models. Hull extrapolation, sets outside the
+      bracket and Z outside 0.01-1 Zsun count as clamped.
+      Q_He1 is interpolated and blended geometrically (orders of magnitude between neighbouring wind models), with the
+      He+ energy bands, Q_He0 and Q_ion following it.
+      Stars without filled-cell or blackbody weight are unchanged.
 Coverage class per point and band group: 0 model, 1 blended (ATLAS9/TLUSTY seam or a Z-interpolated BSTAR cell),
-2 clamped (point outside a grid's range, or a filled grid cell, or a WR / O-star He+ metallicity outside the grids),
-3 blackbody.  Q_He1 is order-of-magnitude: it is set by the wind, not the photosphere.
+2 clamped (point outside a grid's range, or a filled grid cell, or a WR / O-star He+ / CMFGEN metallicity outside the grids),
+3 blackbody; CMFGEN alone is 0, CMFGEN mixed with TLUSTY / PoWR OB models is 1.  Q_He1 is order-of-magnitude: it is set by the wind, not the photosphere.
 """
 import numpy as np
 import h5py
@@ -30,6 +41,9 @@ TLUSTY_SEAM = (15000.0, 20000.0)
 GOTBERG_BELOW_ZREL = 0.1
 POWR_OB_TMAX_KK = 62.0
 EDGE_BLEND = 65000.0 / 55000.0       # TLUSTY hot edge -> blackbody over 55-65 kK, PoWR OB He+ edge over 62-73 kK (factor in T)
+CMF_SCALE = (0.025, 0.25)            # CMFGEN mesh units: log Teff, log g
+CMF_EXTRAP = 1.0                     # CMFGEN availability 1 -> 0 over this distance outside a set's hull (mesh units)
+CMF_TMIN = 20000.0
 CLASSES = ('model', 'blended', 'clamped', 'blackbody')
 GROUPS = ('Q_H0', 'Q_He0', 'Q_He1', 'L_FUV', 'L_LW')
 E_GROUP = {'OPT_NIR': 'L_FUV', 'NUV_lo': 'L_FUV', 'NUV_hi': 'L_FUV', 'FUV_mid': 'L_FUV', 'LW': 'L_LW',
@@ -56,6 +70,18 @@ class HotLUT:
                 self.wr[g].update({k: d.attrs[k] for k in ('X_H', 'family', 'Z_rel', 'vinf', 'D')})
                 self.wr[g]['family'] = self.wr[g]['family'].decode() if isinstance(self.wr[g]['family'], bytes) else self.wr[g]['family']
             self.gb = {float(z): {k: f['gotberg'][z][k][()] for k in ('Teff_kK', 'energy_fracs', 'photon_rates_per_L')} for z in f['gotberg']}
+            self.cm = []
+            for z in (f['cmfgen'] if 'cmfgen' in f else []):
+                d = f['cmfgen'][z]
+                self.cm.append({k: d[k][()] for k in ('log_Teff', 'logg', 'energy_fracs', 'photon_rates_per_L')})
+                self.cm[-1]['Z_rel'] = float(d.attrs['Z_rel'])
+        from scipy.spatial import Delaunay, ConvexHull
+        self.cm.sort(key=lambda c: c['Z_rel'])
+        for c in self.cm:
+            uv = np.column_stack([c['log_Teff'] / CMF_SCALE[0], c['logg'] / CMF_SCALE[1]])
+            c['tri'] = Delaunay(uv); c['uv'] = uv; c['edges'] = ConvexHull(uv).simplices
+            c['vals'] = np.concatenate([c['energy_fracs'], c['photon_rates_per_L']], axis=1)
+            c['lq1'] = np.log10(np.maximum(c['photon_rates_per_L'][:, self.QB.index('Q_He1')], 1e-300))
 
 
 def _corners(axes, pts):
@@ -84,8 +110,9 @@ def _interp(axes, tables, cell_class, pts):
     return vals, worst, out
 
 
-def hotstar_band_fractions(H, lT, lg, lZ, z_sun, atlas9_fn, planck_fn, track=None):
-    """energy fractions E (N, nE), photon rates per erg Q (N, nQ), coverage class per group C (N, 5)"""
+def hotstar_band_fractions(H, lT, lg, lZ, z_sun, atlas9_fn, planck_fn, track=None, diag=None):
+    """energy fractions E (N, nE), photon rates per erg Q (N, nQ), coverage class per group C (N, 5); diag: dict that
+    receives the CMFGEN weight W per point ('cmfgen_W')"""
     EB, QB = H.EB, H.QB; N = len(lT)
     pe, pq = planck_fn(lT)
     PE = np.column_stack([pe[n] for n in EB]); PQ = np.column_stack([pq[n] for n in QB])
@@ -145,6 +172,11 @@ def hotstar_band_fractions(H, lT, lg, lZ, z_sun, atlas9_fn, planck_fn, track=Non
         ws = np.clip(np.log10(T[heb] / TLUSTY_SEAM[0]) / np.log10(TLUSTY_SEAM[1] / TLUSTY_SEAM[0]), 0, 1)   # ATLAS9 side of the seam
         lq = ws * lq + (1 - ws) * np.log10(np.maximum(Q[heb, QB.index('Q_He1')], 1e-300)); ch = np.where(ws < 1, np.maximum(ch, 1), ch)
         qn = 10 ** lq; _set_he1(E, Q, heb, qn, EB, QB); C[heb, GROUPS.index('Q_He1')] = ch
+
+    # CMFGEN wind models for Eddington-limit holes and the hot edge
+    cm = hot & (T >= CMF_TMIN); Wc = np.zeros(N)
+    if H.cm and cm.any(): _cmfgen_patch(H, E, Q, C, cm, lT, lg, zrel, Wc)
+    if diag is not None: diag['cmfgen_W'] = Wc
 
     # WR phases
     if wr.any():
@@ -223,3 +255,69 @@ def _wr_gotberg(H, E, Q, C, m, T, Z):
     E[sel] = (1 - a)[:, None] * Es[i, k] + a[:, None] * Es[i + 1, k]; Q[sel] = (1 - a)[:, None] * Qs[i, k] + a[:, None] * Qs[i + 1, k]
     cl = np.maximum(Cs[i, k], Cs[i + 1, k]); cl = np.where(lz < lzg[0] - 1e-9, 2, cl)
     C[sel] = cl[:, None]
+
+
+def cmf_set_eval(c, lT, lg):
+    """one CMFGEN set: barycentric interpolation on its Delaunay mesh (energy fractions then photon rates; Q_He1 also
+    geometrically, returned as log); outside the hull the value at the nearest hull point. Availability 1 inside, falling
+    linearly to 0 at CMF_EXTRAP mesh units outside; out = 1 for points outside the hull"""
+    p = np.column_stack([lT / CMF_SCALE[0], lg / CMF_SCALE[1]]); n = len(p)
+    s = c['tri'].find_simplex(p); ins = s >= 0
+    v = np.zeros((n, c['vals'].shape[1])); lq = np.full(n, -300.); a = np.zeros(n)
+    if ins.any():
+        T = c['tri'].transform[s[ins]]; bb = np.einsum('ijk,ik->ij', T[:, :2], p[ins] - T[:, 2])
+        bc = np.column_stack([bb, 1 - bb.sum(1)]); sx = c['tri'].simplices[s[ins]]
+        v[ins] = np.einsum('ij,ijk->ik', bc, c['vals'][sx]); lq[ins] = np.einsum('ij,ij->i', bc, c['lq1'][sx]); a[ins] = 1
+    o = ~ins
+    if o.any():                     # nearest point on the hull boundary (edges i-j), linear along the edge
+        e = c['edges']; P0, P1 = c['uv'][e[:, 0]], c['uv'][e[:, 1]]; dv = P1 - P0
+        t = np.clip(np.einsum('nek,ek->ne', p[o][:, None, :] - P0[None], dv) / np.sum(dv * dv, 1), 0, 1)
+        d = np.linalg.norm(p[o][:, None, :] - (P0[None] + t[..., None] * dv[None]), axis=2); k = np.argmin(d, 1); r = np.arange(o.sum())
+        tk = t[r, k][:, None]; i0, i1 = e[k, 0], e[k, 1]
+        v[o] = (1 - tk) * c['vals'][i0] + tk * c['vals'][i1]; lq[o] = (1 - tk[:, 0]) * c['lq1'][i0] + tk[:, 0] * c['lq1'][i1]
+        a[o] = np.clip(1 - d[r, k] / CMF_EXTRAP, 0, 1)
+    return v, a, lq, o.astype(float)
+
+
+def cmf_eval(H, lT, lg, zrel):
+    """CMFGEN values (E | Q per erg), log Q_He1, availability A in [0, 1] and the share of A that is clamped (outside a
+    set's hull, or a set outside the point's Z bracket, or Z outside 0.01-1 Zsun). The bracketing sets (linear in log Z)
+    come first; availability they leave is taken from the other sets, lower Z first (descending), then higher Z."""
+    lzg = np.log10([c['Z_rel'] for c in H.cm]); lz = np.log10(np.maximum(zrel, 1e-30)); x = np.clip(lz, lzg[0], lzg[-1])
+    i = np.clip(np.searchsorted(lzg, x) - 1, 0, len(lzg) - 2); w = (x - lzg[i]) / (lzg[i + 1] - lzg[i])
+    zout = (lz < lzg[0] - 1e-9) | (lz > lzg[-1] + 1e-9)
+    N = len(lT); nk = len(H.cm)
+    ev = [cmf_set_eval(c, lT, lg) for c in H.cm]
+    V = np.zeros((N, H.cm[0]['vals'].shape[1])); A = np.zeros(N); LQ = np.zeros(N); CL = np.zeros(N)
+    def add(k, wt, clamped):
+        v, a, lq, out = ev[k]; c = wt * a
+        V[:] += c[:, None] * v; LQ[:] += c * lq; A[:] += c; CL[:] += c * np.maximum(out, clamped)
+    for k in range(nk):             # bracket
+        zw = np.where(i == k, 1 - w, 0) + np.where(i + 1 == k, w, 0); add(k, zw, zout.astype(float))
+    rem = 1 - A
+    order = [i - j for j in range(nk)] + [i + 1 + j for j in range(nk)]     # fallback: i, i-1, ..., 0 (lower Z first), then i+1, ...
+    for k in order:
+        for kk in np.unique(k[(k >= 0) & (k < nk)]):
+            wt = np.where(k == kk, rem, 0); add(kk, wt, np.ones(N)); rem = rem - wt * ev[kk][1]
+    ok = A > 0; den = np.where(ok, A, 1)
+    return np.where(ok[:, None], V / den[:, None], 0), A, np.where(ok, LQ / den, -300.), np.where(ok, CL / den, 0)
+
+
+def _cmfgen_patch(H, E, Q, C, m, lT, lg, zrel, Wout):
+    """replace filled-TLUSTY-cell and blackbody shares of the stack by CMFGEN where the CMFGEN sets cover the point"""
+    idx = np.where(m)[0]; tl = H.tl; tmax = tl['log_Teff'][-1]
+    pts = np.column_stack([np.minimum(lT[idx], tmax), lg[idx], np.log10(np.maximum(zrel[idx], 1e-30))])
+    (f,), _, _ = _interp((tl['log_Teff'], tl['logg'], np.log10(tl['Z_rel'])), ((tl['cell_class'] == 2).astype(float)[..., None],),
+                         np.zeros_like(tl['cell_class']), pts)
+    b = np.clip((lT[idx] - tmax) / np.log10(EDGE_BLEND), 0, 1); f = f[:, 0]
+    V, A, LQ, clw = cmf_eval(H, lT[idx], lg[idx], zrel[idx])
+    W = A * ((1 - b) * f + b); U = (1 - A) * ((1 - b) * f + b)
+    sel = W > 0; k = idx[sel]; Wout[idx] = W
+    if not sel.any(): return
+    nE = E.shape[1]; Wk = W[sel][:, None]; i1 = H.QB.index('Q_He1')
+    lq = (1 - W[sel]) * np.log10(np.maximum(Q[k, i1], 1e-300)) + W[sel] * LQ[sel]       # He+ rate geometrically
+    E[k] = (1 - Wk) * E[k] + Wk * V[sel, :nE]; Q[k] = (1 - Wk) * Q[k] + Wk * V[sel, nE:]
+    mk = np.zeros(len(E), bool); mk[k] = True; _set_he1(E, Q, mk, 10 ** lq, H.EB, H.QB)
+    ccm = np.where(clw[sel] > 0, 2, 0)[:, None]; full = (W[sel] >= 1 - 1e-12)[:, None]; left = (U[sel] > 1e-12)[:, None]
+    C[k] = np.where(full, ccm, np.where(left, np.maximum(C[k], ccm), np.maximum(1, ccm))).astype(np.int8)
+

@@ -79,7 +79,13 @@ attributes (`radiation_source*`, `atlas9_lookup_option`, `spectral_lut_sha256`).
   into a blackbody over 55-65 kK), ATLAS9 below, He+-ionizing photons of O/B stars from the PoWR OB Vd3 log Q(HeII)
   tables (order of magnitude), WR phases (surface X < 0.4, log Teff > 4.45) from the PoWR WR grids through the
   transformed radius (Z >= 0.1 Zsun, lowest grid 0.07 Zsun) or from Gotberg+2018 stripped stars (Z < 0.1 Zsun),
-  blackbody only off every grid. Coverage per band (model / blended / clamped / blackbody) in `radiation_coverage_*`.
+  CMFGEN wind models (Martins & Palacios 2017, 2021, 2022; Martins+2025 very massive stars with Z-scaled winds; POLLUX;
+  0.01-1 Zsun, scattered along their tracks, linear on a Delaunay mesh in log Teff and log g) take over where the stack
+  above used filled TLUSTY cells (Eddington-limit holes at low log g) or the hot-edge blackbody (above 55 kK); up to
+  0.25 dex in log g outside a set's models the nearest edge value, and where the bracketing metallicities have no model
+  the next lower (then higher) one, e.g. LMC/SMC very massive stars at solar Z - both counted as clamped;
+  blackbody only off every grid. Coverage per band (model / blended / clamped / blackbody) in `radiation_coverage_*`,
+  the Q_H0 share from CMFGEN in `radiation_coverage_Q_H0_cmfgen_frac`.
 - `atlas9_nonionizing`: ionizing bands and photon rates (> 13.6 eV) blackbody; non-ionizing bands from the LUT below
   at the point's log g and Z, blackbody where the LUT has no model (as `masked_planck`).
 - `atlas9`: `stellar/data/lut/spectral_band_lut.hdf5` (ATLAS9 Castelli-Kurucz >= 3500 K, PHOENIX-ACES below), trilinear

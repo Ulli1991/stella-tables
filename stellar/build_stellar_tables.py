@@ -438,8 +438,9 @@ def compute_radiation_from_lut(logTeff_arr, logL_arr, logg_arr, logZ_arr, tag=No
         ef, qf = pe, pq
     elif src == 'hotstar_stack':
         import hotstar_radiation as HS
+        dg = {}
         E, Q, C = HS.hotstar_band_fractions(get_hotstar_lut(), logTeff_arr, logg_arr, logZ_arr, Z_SOLAR,
-                                            spectral_band_fractions, planck_band_fractions, track)
+                                            spectral_band_fractions, planck_band_fractions, track, dg)
         ef = {n: E[:, i] for i, (n, _, _) in enumerate(ENERGY_BANDS)}
         qf = {n: Q[:, i] for i, (n, _, _) in enumerate(PHOTON_RATE_BANDS)}
         if tag is not None:
@@ -448,6 +449,8 @@ def compute_radiation_from_lut(logTeff_arr, logL_arr, logg_arr, logZ_arr, tag=No
             col = {'track_points': HS.GROUPS.index('Q_H0')}
             RAD_COVERAGE[tag] = {k: [float(np.sum(w[C[:, col.get(k, HS.GROUPS.index(k) if k in HS.GROUPS else 0)] == c])) for c in range(4)]
                                  for k, w in wts.items()}
+            W = dg['cmfgen_W']          # share of Q_H0 taken from the CMFGEN wind models, and the rest
+            RAD_COVERAGE[tag]['Q_H0_cmfgen'] = [float(np.sum(W * wts['Q_H0'])), float(np.sum((1 - W) * wts['Q_H0']))]
     elif src == 'atlas9_nonionizing':
         ef, qf, cls = spectral_band_fractions(logTeff_arr, logg_arr, logZ_arr)
         use = cls == 0
@@ -3372,8 +3375,11 @@ def build_all(base_dir, output_file):
                 import hotstar_radiation as HS
                 f.attrs['hotstar_lut_sha256'] = file_sha256(HOTSTAR_LUT_PATH)
                 f.attrs['hotstar_rules'] = ('WR: X_surf < %g and log Teff > %g; PoWR WR (Rt, own v_inf and D) for Z >= %g Zsun, Gotberg+18 below; '
-                                            'TLUSTY >= %g K blended with ATLAS9 to %g K; Q_He1 from PoWR OB Vd3 (order of magnitude)'
-                                            % (HS.WR_X_MAX, HS.WR_LOGTEFF_MIN, HS.GOTBERG_BELOW_ZREL, HS.TLUSTY_SEAM[0], HS.TLUSTY_SEAM[1]))
+                                            'TLUSTY >= %g K blended with ATLAS9 to %g K; Q_He1 from PoWR OB Vd3 (order of magnitude); '
+                                            'CMFGEN (Martins & Palacios 2017-2022, Martins+2025) for filled TLUSTY cells and the hot-edge blackbody share >= %g K '
+                                            '(radiation_coverage_Q_H0_cmfgen_frac = [CMFGEN share, rest] of Q_H0)'
+                                            % (HS.WR_X_MAX, HS.WR_LOGTEFF_MIN, HS.GOTBERG_BELOW_ZREL, HS.TLUSTY_SEAM[0], HS.TLUSTY_SEAM[1], HS.CMF_TMIN))
+                f.attrs['hotstar_cmfgen_sets'] = ', '.join('Z/Zsun %.3g: %d models' % (c['Z_rel'], len(c['log_Teff'])) for c in get_hotstar_lut().cm)
             names = sorted({k for v in RAD_COVERAGE.values() for k in v})
             cov = {k: np.sum([v[k] for v in RAD_COVERAGE.values()], axis=0) for k in names}
             # share of catalogue track points (and of each weighted band) per coverage class
@@ -3507,7 +3513,9 @@ def radiation_source_description():
         return ('model atmospheres per band: TLUSTY BSTAR2006/OSTAR2002 15-55 kK (blended with ATLAS9 over 15-20 kK and into a '
                 'blackbody over 55-65 kK), ATLAS9 below, '
                 'PoWR OB Vd3 log Q(HeII) for He+-ionizing photons of O/B stars, PoWR WR grids (transformed radius) and Gotberg+2018 '
-                'stripped stars (Z < 0.1 Zsun) for WR phases, blackbody only off every grid; see hotstar_radiation.py')
+                'stripped stars (Z < 0.1 Zsun) for WR phases, CMFGEN wind models (Martins & Palacios 2017-2022, Martins+2025) '
+                'for Eddington-limit holes of TLUSTY and above its 55 kK edge (0.01-1 Zsun), blackbody only off every grid; '
+                'see hotstar_radiation.py')
     if RADIATION['source'] == 'atlas9_nonionizing':
         return ('ionizing bands and photon rates (> 13.6 eV): Planck blackbody at Teff; non-ionizing bands: ATLAS9 '
                 '(Castelli-Kurucz) / PHOENIX-ACES band LUT stellar/data/lut/spectral_band_lut.hdf5, trilinear in (log Teff, '

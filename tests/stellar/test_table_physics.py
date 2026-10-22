@@ -283,6 +283,84 @@ def hotstar_nested_and_wr(t):
     return max(o[0::2]) <= 0 and sum(o[1::2]) == 0, 'max inner-outer %.3g /s; WR points with blackbody He+: %d' % (max(o[0::2]), sum(o[1::2]))
 
 @test
+def hotstar_cmfgen_continuous(t):
+    """hotstar_stack with the CMFGEN layer has no jump: dense scans in log Teff (20-100 kK, steps of 5e-5 dex) at log g 3.0,
+    3.5, 4.0, 4.3, 4.5 and in log g (2.0-4.8, steps of 5e-4) at 35, 45, 52, 58, 66 kK, Z = 0.0002, 0.002, 0.014; at the 20
+    largest steps of each line and band (log Q_H0, Q_He0, Q_He1, L_FUV, L_LW per erg) the change over +-1e-7 dex is < 0.01 dex"""
+    def run(B):
+        import hotstar_radiation as HS
+        H = B.get_hotstar_lut(); worst = (0., None); big = (0., None)
+        def bands(lT, lg, z):
+            E, Q, C = HS.hotstar_band_fractions(H, lT, lg, np.full(lT.size, np.log10(z)), B.Z_SOLAR, B.spectral_band_fractions, B.planck_band_fractions)
+            return {'Q_H0': Q[:, H.QB.index('Q_ion_H0')], 'Q_He0': Q[:, H.QB.index('Q_He0')], 'Q_He1': Q[:, H.QB.index('Q_He1')],
+                    'L_FUV': E[:, H.EB.index('NUV_hi')] + E[:, H.EB.index('FUV_mid')], 'L_LW': E[:, H.EB.index('LW')]}
+        lines = [(np.arange(np.log10(2e4), 5.0, 5e-5), np.full(1, g), 'log g %.1f' % g, 0) for g in (3.0, 3.5, 4.0, 4.3, 4.5)]
+        lines += [(np.full(1, np.log10(T)), np.arange(2.0, 4.8, 5e-4), 'T %d kK' % (T / 1e3), 1) for T in (35e3, 45e3, 52e3, 58e3, 66e3)]
+        for z in (0.0002, 0.002, 0.014):
+            for lT, lg, name, ax in lines:
+                lT, lg = np.broadcast_arrays(lT, lg); lT, lg = lT.ravel(), lg.ravel()
+                for k, a in bands(lT, lg, z).items():
+                    d = np.abs(np.diff(np.log10(np.maximum(a, 1e-300)))); d[(a[1:] < 1e-200) | (a[:-1] < 1e-200)] = 0
+                    if d.max() > big[0]: big = (float(d.max()), '%s, %s, Z=%g' % (k, name, z))
+                    for i in np.argsort(d)[-20:]:
+                        x = np.array([lT[i], lT[i + 1]]) if ax == 0 else np.array([lg[i], lg[i + 1]])
+                        x0 = x[0] + (x[1] - x[0]) * np.linspace(0, 1, 9)        # refine the step, take its steepest piece
+                        p = (x0, np.full(9, lg[i])) if ax == 0 else (np.full(9, lT[i]), x0)
+                        v = np.log10(np.maximum(bands(p[0], p[1], z)[k], 1e-300)); j = int(np.argmax(np.abs(np.diff(v))))
+                        c = 0.5 * (x0[j] + x0[j + 1]); q = (np.array([c - 1e-7, c + 1e-7]), np.full(2, lg[i])) if ax == 0 else (np.full(2, lT[i]), np.array([c - 1e-7, c + 1e-7]))
+                        w = bands(q[0], q[1], z)[k]
+                        if min(w) > 1e-200 and abs(np.log10(w[1] / w[0])) > worst[0]:
+                            worst = (abs(float(np.log10(w[1] / w[0]))), '%s, %s, Z=%g at %s %.6f' % (k, name, z, 'log T' if ax == 0 else 'log g', c))
+        return worst, big
+    w, big = _hotstar(run)
+    return w[0] < 0.01, 'largest change over 2e-7 dex at the steepest scan steps %.2e (%s); largest scan step %.2f dex (%s)' % (w + big)
+
+@test
+def hotstar_cmfgen_nodes(t):
+    """every CMFGEN model is reproduced by its mesh (rel. 1e-9, all bands); where the stack takes CMFGEN fully (W = 1, a node
+    of a set at its own Z, inside the hull) hotstar_stack returns the node's Q_H0, Q_He0, Q_He1, L_FUV_mid, L_LW per erg to 1e-9"""
+    def run(B):
+        import hotstar_radiation as HS
+        H = B.get_hotstar_lut(); w1 = 0.; w2 = 0.; n2 = 0
+        for c in H.cm:
+            v, a, lq, out = HS.cmf_set_eval(c, c['log_Teff'], c['logg'])
+            pos = c['vals'] > 1e-200
+            w1 = max(w1, float(np.max(np.abs(v[pos] / c['vals'][pos] - 1))))
+            dg = {}; lZ = np.full(len(c['logg']), np.log10(c['Z_rel'] * B.Z_SOLAR))
+            E, Q, C = HS.hotstar_band_fractions(H, c['log_Teff'], c['logg'], lZ, B.Z_SOLAR, B.spectral_band_fractions, B.planck_band_fractions, diag=dg)
+            m = dg['cmfgen_W'] >= 1 - 1e-12; n2 += int(m.sum())
+            for col, ref in ((Q[:, H.QB.index('Q_ion_H0')], c['photon_rates_per_L'][:, H.QB.index('Q_ion_H0')]),
+                             (Q[:, H.QB.index('Q_He0')], c['photon_rates_per_L'][:, H.QB.index('Q_He0')]),
+                             (Q[:, H.QB.index('Q_He1')], c['photon_rates_per_L'][:, H.QB.index('Q_He1')]),
+                             (E[:, H.EB.index('FUV_mid')], c['energy_fracs'][:, H.EB.index('FUV_mid')]), (E[:, H.EB.index('LW')], c['energy_fracs'][:, H.EB.index('LW')])):
+                k = m & (ref > 1e-200)
+                if k.any(): w2 = max(w2, float(np.max(np.abs(col[k] / ref[k] - 1))))
+        return w1, w2, n2, sum(len(c['logg']) for c in H.cm)
+    w1, w2, n2, n = _hotstar(run)
+    return w1 < 1e-9 and w2 < 1e-9 and n2 > 0, 'mesh: %d nodes, max rel dev %.1e; %d nodes taken fully by the stack, max rel dev %.1e' % (n, w1, n2, w2)
+
+@test
+def hotstar_cmfgen_only_fills(t):
+    """the CMFGEN layer changes no point whose TLUSTY interpolation uses only non-filled cells at or below the 55 kK edge (lattice
+    20-55 kK x log g 2-4.75 x 4 Z): those points are bit-identical with and without the CMFGEN sets"""
+    def run(B):
+        import hotstar_radiation as HS
+        H = B.get_hotstar_lut(); tl = H.tl
+        lT, lg, lZ = np.meshgrid(np.linspace(np.log10(2e4), np.log10(5.5e4), 60), np.linspace(2, 4.75, 45), np.log10([0.0002, 0.002, 0.014, 0.03]), indexing='ij')
+        lT, lg, lZ = lT.ravel(), lg.ravel(), lZ.ravel()
+        args = (lT, lg, lZ, B.Z_SOLAR, B.spectral_band_fractions, B.planck_band_fractions)
+        E1, Q1, C1 = HS.hotstar_band_fractions(H, *args)
+        cm = H.cm; H.cm = []
+        try: E0, Q0, C0 = HS.hotstar_band_fractions(H, *args)
+        finally: H.cm = cm
+        (f,), _, _ = HS._interp((tl['log_Teff'], tl['logg'], np.log10(tl['Z_rel'])), ((tl['cell_class'] == 2).astype(float)[..., None],),
+                                np.zeros_like(tl['cell_class']), np.column_stack([lT, lg, lZ - np.log10(B.Z_SOLAR)]))
+        clean = f[:, 0] == 0; changed = ~(np.all(E1 == E0, 1) & np.all(Q1 == Q0, 1) & np.all(C1 == C0, 1))
+        return int(clean.sum()), int((clean & changed).sum()), int((~clean & changed).sum())
+    n, bad, used = _hotstar(run)
+    return bad == 0 and used > 0, '%d points without filled cells, %d changed; %d hole points take CMFGEN' % (n, bad, used)
+
+@test
 def radiation_source_recorded(t):
     """table names its radiation source and options; atlas9 builds record the LUT checksum and coverage"""
     a = t.f.attrs; src = a.get('radiation_source_option')
