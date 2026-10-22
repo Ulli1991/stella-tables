@@ -52,11 +52,12 @@ ATLAS9_MH_CODES = {
     'p05': +0.5, 'p02': +0.2, 'p00': 0.0,
     'm05': -0.5, 'm10': -1.0, 'm15': -1.5, 'm20': -2.0, 'm25': -2.5,
 }
-# Convert [M/H] to Z for our grid matching
+from solar_abundances import Z_SUN
+
+
 def mh_to_Z(mh):
-    """[M/H] → approximate Z (Asplund 2009)."""
-    Z_solar = 0.0134
-    return Z_solar * 10**mh
+    """[M/H] -> Z on the tables' scale (scaled-solar, Z_sun = solar_abundances.Z_SUN)"""
+    return Z_SUN * 10**mh
 
 # PHOENIX ACES grid (Goettingen mirror)
 PHOENIX_BASE_URL = 'https://phoenix.astro.physik.uni-goettingen.de/data/HiResFITS/PHOENIX-ACES-AGSS-COND-2011'

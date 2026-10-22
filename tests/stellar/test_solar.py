@@ -54,6 +54,28 @@ def gizmo_init_array(a):
     return dev < 1e-9, 'max rel dev init.cc vs generator %.1e' % dev
 
 
+@test
+def no_stray_solar_constants(a):
+    """builder scripts take Z_sun from solar_abundances.py: no literal 0.0134 / 0.0142 or division by a literal 0.014"""
+    pat = re.compile(r'0\.0134\b|0\.0142\b|\s/\s*0\.014\b|log10\(0\.014\)')
+    sdir = os.path.join(os.path.dirname(os.path.dirname(HERE)), 'stellar'); hits = []
+    for fn in sorted(os.listdir(sdir)):
+        if fn.endswith('.py') and fn != 'solar_abundances.py':
+            for i, line in enumerate(open(os.path.join(sdir, fn)), 1):
+                if pat.search(line.split('#')[0]): hits.append('%s:%d' % (fn, i))
+    return not hits, 'stray solar constants: %s' % (hits or 'none')
+
+
+@test
+def lut_metallicity_on_z_sun(a):
+    """spectral LUT [M/H] maps to Z with the tables' Z_sun (builder lookup and LUT generator)"""
+    import h5py as _h, build_stellar_tables as B, build_spectral_lut as S
+    with _h.File(B.SPECTRAL_LUT_PATH, 'r') as f: mh = f['metallicity_MH'][()]
+    lz = B.load_spectral_lut()[2]
+    d1, d2 = np.max(np.abs(lz - np.log10(sa.Z_SUN) - mh)), abs(S.mh_to_Z(0.0) / sa.Z_SUN - 1)
+    return max(d1, d2) < 1e-12, 'builder max |log Z - log Z_sun - [M/H]| = %.1e dex, generator |Z([M/H]=0)/Z_sun - 1| = %.1e' % (d1, d2)
+
+
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('build'); ap.add_argument('--gizmo'); a = ap.parse_args()
     nf = 0

@@ -440,8 +440,7 @@ def load_spectral_lut():
     with h5py.File(SPECTRAL_LUT_PATH, 'r') as f:
         log_Teff = f['log_Teff'][:]
         logg_arr = f['logg'][:]
-        Z_arr = f['Z'][:]
-        log_Z = np.log10(np.maximum(Z_arr, 1e-12))
+        log_Z = np.log10(Z_SOLAR) + f['metallicity_MH'][:]   # scaled-solar [M/H] on the tables' Z_sun (the LUT's own Z axis used 0.0134)
 
         energy_fracs = {}
         for name, _, _ in ENERGY_BANDS:
@@ -2230,7 +2229,7 @@ def classify_remnant_initial(M_init, Z, presn, wd_masses):
         return 1, 1.25  # ECSN → low-mass NS
 
     # Core-collapse: NS vs BH from compactness
-    feh = np.log10(max(Z, 1e-6) / 0.014)
+    feh = np.log10(max(Z, 1e-6) / Z_SOLAR)
     feh_grid = [0, -1, -2, -3]
     feh_near = min(feh_grid, key=lambda x: abs(x - feh))
     best = None
@@ -2588,7 +2587,7 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
         Z_p2 = min(p2_Zs, key=lambda z: abs(np.log10(max(z, 1e-12)) - log_Z)) if p2_Zs else None
         Z_ng = min(nugrid_Zs, key=lambda z: abs(np.log10(max(z, 1e-12)) - log_Z)) if nugrid_Zs else None
         Z_kar = min(kar_Z, key=lambda z: abs(np.log10(z) - np.log10(max(Z, 1e-6)))) if kar_Z else None
-        feh = np.log10(max(Z, 1e-6) / 0.014)
+        feh = np.log10(max(Z, 1e-6) / Z_SOLAR)
         feh_near = min(cl_fehs, key=lambda x: abs(x - feh))
 
         # PARSEC v2 masses at this Z (for remnant classification)
@@ -2647,7 +2646,7 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
                         y_net = y_total - X_init_solar.get(elem, 0.0) * M_ej_lim
 
                         # Z-scaling from NuGrid for non-solar metallicities
-                        if Z_ng is not None and abs(log_Z - np.log10(0.014)) > 0.15:
+                        if Z_ng is not None and abs(log_Z - np.log10(Z_SOLAR)) > 0.15:
                             scale = nugrid_z_scale.get(Z_ng, {}).get(elem, 1.0)
                             y_net *= scale
                     else:
