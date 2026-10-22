@@ -32,8 +32,7 @@ from glob import glob
 
 # Reuse band definitions from the main builder
 from build_stellar_tables import (
-    ENERGY_BANDS, PHOTON_RATE_BANDS, COMBO_BANDS, RAD_KEYS,
-    h_planck, k_boltz, c_light, sigma_sb, eV_to_erg, L_sun, R_sun,
+    ENERGY_BANDS, PHOTON_RATE_BANDS, h_planck, c_light, eV_to_erg,
 )
 
 # ═══════════════════════════════════════════════════════════════
@@ -100,7 +99,7 @@ def download_atlas9(mh_codes=None):
         except Exception as e:
             print(f"    FAILED: {e}")
             # Try alternative: individual .dat files
-            print(f"    Trying individual flux files instead...")
+            print("    Trying individual flux files instead...")
             _download_atlas9_individual(mh_code, atlas9_dir)
 
 
@@ -147,7 +146,7 @@ def download_phoenix():
     wave_url = f'{PHOENIX_BASE_URL}/WAVE_PHOENIX-ACES-AGSS-COND-2011.fits'
     wave_file = os.path.join(phoenix_dir, 'WAVE_PHOENIX-ACES-AGSS-COND-2011.fits')
     if not os.path.exists(wave_file):
-        print(f"  Downloading PHOENIX wavelength grid...")
+        print("  Downloading PHOENIX wavelength grid...")
         try:
             urllib.request.urlretrieve(wave_url, wave_file)
         except Exception as e:
@@ -176,7 +175,7 @@ def download_phoenix():
                 except Exception:
                     pass  # Not all combinations exist
 
-    print(f"  PHOENIX download complete")
+    print("  PHOENIX download complete")
 
 
 # ═══════════════════════════════════════════════════════════════
