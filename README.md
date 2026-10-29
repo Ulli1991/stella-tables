@@ -31,8 +31,8 @@ commit pinned in GIZMO's `scripts/get_stella_tables.sh`, so each GIZMO version b
 |---|---|---|
 | `stellar_tables_unified.hdf5` | `galaxy_sf/stellar_tables/` | `stellar/build_stellar_tables.py` |
 | `stellar_wind_cumulative.hdf5` | `galaxy_sf/stellar_tables/` | same (written next to the main table) |
-| `chemistry/energy-table-x.txt` | `cooling/chemcool/` | `chemistry/make_energy_table.py` |
-| `chemistry/eh2-table.txt`, `H2-cooling-ratios.dat`, `wss_z_collis.txt` | `cooling/chemcool/` | copied from `chemistry/tables/` (inherited, see below) |
+| `chemistry/energy-table-x.txt` | `cooling/sgchem/` (`cooling/chemcool/` before the rename) | `chemistry/make_energy_table.py` |
+| `chemistry/eh2-table.txt`, `H2-cooling-ratios.dat`, `wss_z_collis.txt` | `cooling/sgchem/` (`cooling/chemcool/` before the rename) | copied from `chemistry/tables/` (inherited, see below) |
 
 ## Layout
 
