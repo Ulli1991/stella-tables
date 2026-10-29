@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Checks on the built CHEMCOOL tables (no GIZMO tree needed).
+"""Checks on the built SGCHEM tables (no GIZMO tree needed).
 
   test_chemistry.py BUILD_DIR      exit 0 = all PASS (expected failures do not fail the run)
 

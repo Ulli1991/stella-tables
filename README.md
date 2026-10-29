@@ -14,7 +14,7 @@ Needs python3 with numpy, scipy, h5py. The `--gizmo` lookup test also needs `mpi
 
 ## Use from GIZMO
 
-A GIZMO build with `CHEMCOOL` or `GALSF_RESOLVEDISM_STELLAR_TABLES` runs `scripts/get_stella_tables.sh` before
+A GIZMO build with `SGCHEM` or `GALSF_RESOLVEDISM_STELLAR_TABLES` runs `scripts/get_stella_tables.sh` before
 linking. If any of the three generated tables is missing there, it clones this repo, runs `build.sh` (tests
 included), and installs the outputs only if every suite passes; otherwise it does nothing. Settings:
 
@@ -43,8 +43,8 @@ stellar/                      table builder and helpers
   data/yields/                Chieffi & Limongi 2018, Karakas 2010, Karakas & Lugaro 2016, NuGrid
   data/lut/spectral_band_lut.hdf5   band-energy fractions (stellar/build_spectral_lut.py)
 chemistry/
-  make_energy_table.py        CHEMCOOL energy -> (T, gamma) table from eh2-table.txt
-  tables/                     inherited CHEMCOOL tables
+  make_energy_table.py        SGCHEM energy -> (T, gamma) table from eh2-table.txt
+  tables/                     inherited SGCHEM tables
   reference/energy-table-x.gizmo-original.txt.xz   energy table GIZMO shipped before the 20000 K seam fix
 fetch/                        how to get the raw catalogues
 tests/run_all.py              runs every suite below

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CHEMCOOL energy -> (temperature, gamma) lookup table.
+"""SGCHEM energy -> (temperature, gamma) lookup table.
 
 Specific energy per particle (in K) of an H/He/H2 gas:
     ekn = x * e_H2(T) + (1 - x) * 1.5 T,     x = abh2 / (1 + abhe - abh2)
