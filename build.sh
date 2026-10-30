@@ -30,5 +30,9 @@ python3 "$HERE/chemistry/make_energy_table.py" --eh2 "$HERE/chemistry/tables/eh2
         --out "$OUT/chemistry/energy-table-x.txt" > "$OUT/build_chemistry.log" 2>&1
 for f in eh2-table.txt H2-cooling-ratios.dat wss_z_collis.txt; do cp "$HERE/chemistry/tables/$f" "$OUT/chemistry/"; done
 
+echo "== SGChem data tables"
+python3 "$HERE/chemistry/sgchem/make_net18_tables.py" "$OUT/chemistry/sgchem_net18_tables.bin" >> "$OUT/build_chemistry.log" 2>&1
+python3 "$HERE/chemistry/sgchem/make_chem_tables.py" "$OUT/chemistry/sgchem_chem_tables.bin" --header "$OUT/chemistry/chem_tables_data.h" >> "$OUT/build_chemistry.log" 2>&1
+
 echo "== tests"
 python3 "$HERE/tests/run_all.py" "$OUT" ${GIZMO_SRC:+--gizmo "$GIZMO_SRC"}

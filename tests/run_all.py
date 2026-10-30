@@ -28,6 +28,7 @@ def main():
         ('stellar: solar composition', [py, os.path.join(HERE, 'stellar', 'test_solar.py'), b] + (['--gizmo', a.gizmo] if a.gizmo else [])),
         ('chemistry: tables', [py, os.path.join(HERE, 'chemistry', 'test_chemistry.py'), b]),
     ]
+    suites.append(('chemistry: SGChem data', [py, os.path.join(HERE, 'chemistry', 'test_sgchem_data.py'), b] + (['--gizmo', a.gizmo] if a.gizmo else [])))
     if a.gizmo:
         suites.append(('chemistry: GIZMO lookups', [py, os.path.join(HERE, 'chemistry', 'run_lookup_test.py'), a.gizmo, b,
                                                     os.path.join(b, 'lookup_test')]))

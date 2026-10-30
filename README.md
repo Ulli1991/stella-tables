@@ -34,6 +34,19 @@ commit pinned in GIZMO's `scripts/get_stella_tables.sh`, so each GIZMO version b
 | `chemistry/energy-table-x.txt` | `cooling/sgchem/` (`cooling/chemcool/` before the rename) | `chemistry/make_energy_table.py` |
 | `chemistry/eh2-table.txt`, `H2-cooling-ratios.dat`, `wss_z_collis.txt` | `cooling/sgchem/` (`cooling/chemcool/` before the rename) | copied from `chemistry/tables/` (inherited, see below) |
 
+## SGChem data (chemistry/sgchem/)
+
+| file | built by | from |
+|---|---|---|
+| `sgchem_net18_tables.bin` (network 18 rates, 44 float64 arrays) | `make_net18_tables.py` | `net18_source/` (RTZ C sources + data, MIT) |
+| `sgchem_chem_tables.bin` (45 arrays, former `chem_tables_data.h`) and legacy `chem_tables_data.h` | `make_chem_tables.py` | `chem_tables_source/` (SGChem Fortran DATA statements) |
+| `reference_data/` + `data.sha256` | frozen, not built | one-zone / cooling-function references for nets 3 5 15 16 17 18 20 (10 MB) |
+
+`build.sh` writes the two .bin files and the header to `build/chemistry/`; `tests/chemistry/test_sgchem_data.py` checks they equal the pinned hashes in
+`chemistry/sgchem/expected_sha256.txt` (net18 = the hash GIZMO expects), the .bin round-trips to the header, the reference data match `data.sha256`;
+with `--gizmo` also GIZMO's own hash entries and files. GIZMO-side changes (hash entries, required net 18, loader for the chem tables, install script):
+`docs/GIZMO_SIDE_NOTES.md` and `docs/gizmo_side_installed_tables.diff`. Licence: `docs/LICENSE_PROPOSAL.md` (undecided).
+
 ## Layout
 
 ```

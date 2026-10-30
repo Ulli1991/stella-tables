@@ -1,0 +1,89 @@
+diff -ruN a/core/begrun.cc b/core/begrun.cc
+--- a/core/begrun.cc	2026-10-30 12:06:10.139834771 +0100
++++ b/core/begrun.cc	2026-10-30 12:06:10.175834861 +0100
+@@ -102,10 +102,13 @@
+       const char *dd = getenv("CHEMCXX_DATADIR"); std::string cd = dd ? dd : All.SGCHEMTablesDir;
+ #endif
+       for(const char *f : {"energy-table-x.txt", "eh2-table.txt", "H2-cooling-ratios.dat", "wss_z_collis.txt"}) {paths.push_back(cd + "/" + f);}
+-#if CHEMISTRYNETWORK == 18 && !defined(SGCHEM_FORTRAN)
++#ifndef SGCHEM_FORTRAN
++      paths.push_back(cd + "/sgchem_chem_tables.bin");
++#if CHEMISTRYNETWORK == 18
+       paths.push_back(cd + "/sgchem_net18_tables.bin");
+ #endif
+ #endif
++#endif
+       bad = stella_tables_verify(paths);
+     }
+     MPI_Bcast(&bad, 1, MPI_INT, 0, MPI_COMM_WORLD);
+diff -ruN a/galaxy_sf/stella_tables_check.h b/galaxy_sf/stella_tables_check.h
+--- a/galaxy_sf/stella_tables_check.h	2026-10-30 12:06:10.135834760 +0100
++++ b/galaxy_sf/stella_tables_check.h	2026-10-30 12:06:10.175834861 +0100
+@@ -13,7 +13,7 @@
+ #include <algorithm>
+ #include <hdf5.h>
+ 
+-#define STELLA_TABLES_REF "a4830ab18252c8786539e95598fc789f3b6d5142" /* stella-tables commit; keep in step with scripts/get_stella_tables.sh */
++#define STELLA_TABLES_REF "<new stella-tables commit>" /* stella-tables commit; keep in step with scripts/get_stella_tables.sh */
+ 
+ static const char *const StellaTablesExpected[][2] = { /* basename, content hash */
+     {"stellar_tables_unified.hdf5",  "14a23087b3d22c09eefa0d6097ae059f92598fb55cf2f86687419dcced5efada"},
+@@ -23,6 +23,7 @@
+     {"H2-cooling-ratios.dat",        "13cf3c756a6b9e4e993ba9fb5fa93883e1dedd788d6415149497ef1fee893a0d"},
+     {"wss_z_collis.txt",             "eaa290e0895be4846147e99880f18e5b981d9293cde632e4b3c4be71f10f8372"},
+     {"sgchem_net18_tables.bin",      "e3c41f2c5a676557d06f44854b14a1ee64b0d98142e1459779b1b8c8631f928d"}, /* SGChem network 18 only */
++    {"sgchem_chem_tables.bin",       "2d623ca6e44f157a3c4cafca835c15dc0070e57dcc562bb8450e00274d1276f7"}, /* every C++ SGChem network */
+ };
+ 
+ struct StellaSha256 {
+diff -ruN a/scripts/get_stella_tables.sh b/scripts/get_stella_tables.sh
+--- a/scripts/get_stella_tables.sh	2026-10-30 12:06:10.131834751 +0100
++++ b/scripts/get_stella_tables.sh	2026-10-30 12:06:10.175834861 +0100
+@@ -25,8 +25,7 @@
+         if type module >/dev/null 2>&1 && module load python-waterboa >/dev/null 2>&1; then PY="$(command -v python3)"; fi
+     fi
+ fi
+-FILES=(stellar_tables_unified.hdf5 stellar_wind_cumulative.hdf5 energy-table-x.txt eh2-table.txt H2-cooling-ratios.dat wss_z_collis.txt)
+-OPTIONAL=(sgchem_net18_tables.bin)   # installed and checked when the source provides it (SGChem network 18 only)
++FILES=(stellar_tables_unified.hdf5 stellar_wind_cumulative.hdf5 energy-table-x.txt eh2-table.txt H2-cooling-ratios.dat wss_z_collis.txt sgchem_net18_tables.bin sgchem_chem_tables.bin)
+ 
+ verify() { # verify DIR: every table present with its expected hash
+     local d="$1" f want got
+@@ -36,12 +35,7 @@
+         got="$("$PY" -I "$GIZMO/scripts/stella_tables_hash.py" "$d/$f" | cut -d' ' -f1)"
+         [ "$got" = "$want" ] || { echo "get_stella_tables: $d/$f has hash $got, expected $want (stella-tables $REF)" >&2; return 1; }
+     done
+-    for f in "${OPTIONAL[@]}"; do
+-        [ -e "$d/$f" ] || continue
+-        want="$(sed -n "s/.*{\"$f\", *\"\([0-9a-f]*\)\"}.*/\1/p" "$HDR")"
+-        got="$("$PY" -I "$GIZMO/scripts/stella_tables_hash.py" "$d/$f" | cut -d' ' -f1)"
+-        [ "$got" = "$want" ] || { echo "get_stella_tables: $d/$f has hash $got, expected $want (stella-tables $REF)" >&2; return 1; }
+-    done
++    [ -d "$d/sgchem_reference_data" ] && (cd "$d/sgchem_reference_data" && sha256sum -c --quiet data.sha256 >/dev/null 2>&1) || return 1
+ }
+ 
+ mkdir -p "$PREFIX"; PREFIX="$(cd "$PREFIX" && pwd)"
+@@ -61,9 +55,10 @@
+         if [ -e "$SRC/$f" ]; then cp "$SRC/$f" "$PREFIX/"; elif [ -e "$SRC/chemistry/$f" ]; then cp "$SRC/chemistry/$f" "$PREFIX/";
+         else echo "get_stella_tables: $f not found in $SRC" >&2; exit 1; fi
+     done
+-    for f in "${OPTIONAL[@]}"; do
+-        if [ -e "$SRC/$f" ]; then cp "$SRC/$f" "$PREFIX/"; elif [ -e "$SRC/chemistry/$f" ]; then cp "$SRC/chemistry/$f" "$PREFIX/"; fi
+-    done
++    rm -rf "$PREFIX/sgchem_reference_data"   # frozen chemistry reference (cooling/sgchem/cxx/fortran_reference/check_reference.sh)
++    cp -r "$SRC/../chemistry/sgchem/reference_data" "$PREFIX/sgchem_reference_data" 2>/dev/null \
++        || cp -r "$SRC/sgchem_reference_data" "$PREFIX/sgchem_reference_data" \
++        || { echo "get_stella_tables: sgchem_reference_data not found in $SRC" >&2; exit 1; }
+     verify "$PREFIX" || { echo "get_stella_tables: installed tables in $PREFIX do not match these sources" >&2; exit 1; }
+     { echo "stella-tables: $REF"; echo "source: ${STELLA_TABLES_FROM:-$REPO}"; date; } > "$PREFIX/stella_tables.stamp"
+ fi
+@@ -72,7 +67,8 @@
+     mkdir -p "$TREE/galaxy_sf/stellar_tables" "$TREE/cooling/sgchem"
+     for f in stellar_tables_unified.hdf5 stellar_wind_cumulative.hdf5; do ln -sfn "$PREFIX/$f" "$TREE/galaxy_sf/stellar_tables/$f"; done
+     for f in energy-table-x.txt eh2-table.txt H2-cooling-ratios.dat wss_z_collis.txt; do ln -sfn "$PREFIX/$f" "$TREE/cooling/sgchem/$f"; done
+-    if [ -e "$PREFIX/sgchem_net18_tables.bin" ]; then ln -sfn "$PREFIX/sgchem_net18_tables.bin" "$TREE/cooling/sgchem/sgchem_net18_tables.bin"; fi
++    for f in sgchem_net18_tables.bin sgchem_chem_tables.bin; do ln -sfn "$PREFIX/$f" "$TREE/cooling/sgchem/$f"; done
+     echo "get_stella_tables: linked into $TREE"
+ fi
++echo "chemistry reference check: SGCHEM_REFERENCE_DATA=$PREFIX/sgchem_reference_data"
+ echo "parameter file: StellarTablesFile $PREFIX/stellar_tables_unified.hdf5   SGCHEMTablesDir $PREFIX"
