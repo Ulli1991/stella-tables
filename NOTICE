@@ -1,0 +1,34 @@
+Third-party parts of stella-tables
+
+Own code (builders, tests, helper scripts): BSD-3, see LICENSE, (c) 2026 Ulrich Steinwandel.
+
+Chemistry
+  chemistry/sgchem/net18_source/   Built on RTZ, released under the MIT licence; Copyright (c) 2024 HarleyKatz.
+                                   The MIT LICENSE stays in that directory.
+  chemistry/sgchem/chem_tables_source/, chemistry/tables/, and the built sgchem_chem_tables.bin / chem_tables_data.h
+                                   SGChem Fortran code and data by Simon Glover (ITA Heidelberg); GNU GPL as distributed
+                                   in Arepo (version not stated there). Derived files keep that licence (GPL).
+                                   chemistry/tables/ also holds tables inherited from CHEMCOOL/Arepo (same terms).
+  The BSD-3 scripts only read the GPL files; the GPL parts stay in their own directories.
+
+Stellar data (stellar/data/, fetch/). The terms below were not stated in any file of this repository; where no
+terms are written here they are to be confirmed against each source before redistribution. Citations are those the
+repository's own fetch scripts and READMEs name.
+  MIST v1.2 (non-rotating EEP tracks)   Source: http://waps.cfa.harvard.edu/MIST/ (fetch/fetch_mist.sh).
+                                        Citation requested by the MIST project: Choi et al. 2016, ApJ 823, 102 and
+                                        Dotter 2016, ApJS 222, 8. Terms on the MIST website: to be confirmed.
+  PARSEC v1.2S                          Source: https://stev.oapd.inaf.it/PARSEC/tracks_v12s.html.
+                                        Citation: Bressan et al. 2012, MNRAS 427, 127. PARSEC/CMD terms: to be confirmed.
+  PARSEC v2.0 VMS tracks and ejecta     Source: https://stev.oapd.inaf.it/PARSEC/tracks_v2_VMS.html.
+                                        Citation: Costa et al. 2025, arXiv:2501.12917. Terms: to be confirmed.
+  BoOST                                 Szecsi et al., arXiv:2004.08203. Download location and terms: to be confirmed.
+  Chieffi & Limongi 2018, Karakas 2010, Karakas & Lugaro 2016, NuGrid (stellar/data/yields): published yields;
+                                        terms: to be confirmed.
+  TLUSTY OSTAR2002 / BSTAR2006          Lanz & Hubeny 2003, ApJS 146, 417; 2007, ApJS 169, 83 (via the SVO theory server).
+  PoWR                                  https://www.astro.physik.uni-potsdam.de/PoWR/; Hamann & Graefener 2004; Todt et
+                                        al. 2015; Sander et al. 2012; Hainich et al. 2014, 2015; Pauli et al. 2026.
+  Gotberg et al. 2018 SEDs              A&A 615, A78 (CDS J/A+A/615/A78).
+  CMFGEN via POLLUX                     https://pollux.oreme.org; Palacios et al. 2010, A&A 516, A13; Martins & Palacios
+                                        2017, 2021, 2022; Martins et al. 2025, A&A 698, A262.
+  YBC / bolometric corrections          Terms and citation: to be confirmed (not named in this repository).
+  For all rows: redistribution of the reduced copies and derived LUTs: to be confirmed with the data authors.

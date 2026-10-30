@@ -1,8 +1,6 @@
-# LICENSE: BSD-3 for own code (decided); third-party parts keep their terms
+# Licence: BSD-3 for own code (decided)
 
-Needs Uli's choice. What bears on it:
-- own code (builders, tests, chemistry/make_energy_table.py): free choice (MIT or BSD-3 are the permissive options; GPL-3 if copyleft is wanted).
-- `chemistry/sgchem/net18_source/`: RTZ by HarleyKatz, MIT (LICENSE kept in that directory; MIT must stay with it).
-- `chemistry/sgchem/chem_tables_source/` and `chemistry/tables/`: SGChem Fortran/data by Simon Glover (and inherited CHEMCOOL tables), GPL as distributed in Arepo (no GPL version is named in Arepo's SGChem sources); derived files keep that licence. See the NOTICE in `chem_tables_source/`.
-- `stellar/data/`: third-party track catalogues and yields (MIST, PARSEC, BoOST, Chieffi & Limongi, Karakas, NuGrid): each has its own terms/citation request; a repo licence would not cover them.
-A LICENSE file would therefore cover "own code" only, with a NOTICE listing the third-party parts. 
+Own code (builders, tests, helper scripts) is BSD-3, see `LICENSE`. Third-party parts keep their own terms; they are listed in the root `NOTICE`.
+- `chemistry/sgchem/net18_source/`: built on RTZ (Copyright (c) 2024 HarleyKatz), MIT; the MIT LICENSE stays in that directory.
+- `chemistry/sgchem/chem_tables_source/`, `chemistry/tables/` and the built chem tables: SGChem by Simon Glover (ITA Heidelberg), GPL as distributed in Arepo (version not stated there).
+- `stellar/data/`: third-party track catalogues, yields and spectra; sources, citations and open terms in `NOTICE`.

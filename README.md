@@ -45,7 +45,7 @@ commit pinned in GIZMO's `scripts/get_stella_tables.sh`, so each GIZMO version b
 `build.sh` writes the two .bin files and the header to `build/chemistry/`; `tests/chemistry/test_sgchem_data.py` checks they equal the pinned hashes in
 `chemistry/sgchem/expected_sha256.txt` (net18 = the hash GIZMO expects), the .bin round-trips to the header, the reference data match `data.sha256`;
 with `--gizmo` also GIZMO's own hash entries and files. GIZMO-side changes (hash entries, required net 18, loader for the chem tables, install script):
-`docs/GIZMO_SIDE_NOTES.md` and `docs/gizmo_side_installed_tables.diff`. Licence: `docs/LICENSE_PROPOSAL.md` (undecided).
+`docs/GIZMO_SIDE_NOTES.md` and `docs/gizmo_side_installed_tables.diff`. Licence: BSD-3 for own code, see `LICENSE`; third-party parts and their terms in `NOTICE`.
 
 ## Layout
 
