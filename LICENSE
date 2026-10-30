@@ -31,6 +31,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 Scope: this licence covers the code and documentation written for this
 repository. Third-party input data and vendored sources keep their own terms
 (e.g. chemistry/sgchem/net18_source/ is MIT, see its LICENSE; stellar model
-and yield data keep the terms of their original publications). Redistribution
-terms for the SGChem/CHEMCOOL Fortran data tables are to be confirmed with
-their authors.
+and yield data keep the terms of their original publications). The SGChem
+Fortran code and the data tables derived from it (chemistry/sgchem/chem_tables_source/,
+chemistry/tables/) were written by Simon Glover and are distributed under the GNU
+General Public License, as in Arepo; files derived from them keep that licence.

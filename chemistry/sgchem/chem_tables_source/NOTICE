@@ -1,0 +1,3 @@
+The SGChem Fortran code and data tables in this directory were written by Simon Glover
+and are distributed under the GNU General Public License, as in Arepo. Files derived
+from them keep that licence. Arepo's SGChem sources do not name a GPL version.
