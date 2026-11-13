@@ -13,11 +13,11 @@ Standard initial conditions for the Stella model in GIZMO, each shipped as a rea
 |---|---|---|---|
 | [`tallbox/`](tallbox/README.md) | stratified 1 x 1 x 20 kpc box, 1e7 gas cells of 1 Msun, Sigma_gas = 10 Msun/pc^2 | `tallbox.hdf5` (1.6 GB) | 112 cores, 480 GB |
 | [`clouds/`](clouds/README.md) | small test cloud (12k cells, 1 Msun) and the reference cloud M2e4 at 1 and 0.1 Msun (STARFORGE, Grudic+22), 2 chemistry variants each | 5 files, 1 MB to 29 MB | laptop to login node |
-| [`wlm/`](wlm/README.md) | WLM-like dwarf (Smith 2026 m10 spec), 10 Msun gas, live halo and old stellar disc. The 1 Msun version is **to come** | `wlm_m10_mg10.dat` (0.3 GB) | 112 cores, 480 GB |
+| [`wlm/`](wlm/README.md) | WLM-like dwarf (Smith 2026 m10 spec), live halo (200 Msun DM) and old stellar disc, gas at 1 Msun (1.4e8 particles) and 10 Msun (test) | `wlm_m10_mg1.hdf5` (5.3 GB), `wlm_m10_mg10.dat` (0.3 GB) | 1 Msun: 4 nodes (min. 3), ~1 TB; 10 Msun: 112 cores, 480 GB |
 | [`zoom/`](zoom/README.md) | cosmological zooms of two ~1e8 Msun halos at z = 6: gas + DM at level 10 (64 Msun gas) and 12 (1 Msun gas), DM-only versions, MUSIC configs, region files | 5 files (0.6 to 3.5 GB) | 1 node, 480 GB, 64-bit IDs |
 | [`parents/`](parents/README.md) | the parent boxes the zooms were cut from (z = 6 box, z = 0 box) with configs and runs | 2 files (0.5 and 4.3 GB) | to regenerate zooms |
 
-Total of all files: 17.0 GB. The z = 0 dwarf zoom ICs do not exist yet (the z = 0 parent box is finished, the halo selection is not).
+Total of all files: 22.3 GB. The z = 0 dwarf zoom ICs do not exist yet (the z = 0 parent box is finished, the halo selection is not).
 
 ## Getting the files
 
@@ -44,12 +44,12 @@ mpirun -np N ../GIZMO_SOURCE_DIR/GIZMO_xxx <set>.params     # add 1 as last argu
 ```
 The parameter files use only relative paths (`tables/`, the IC name in the run directory), so nothing needs editing except `MaxMemSize` (MB per rank) when you change the number of ranks. `MaxMemSize` x ranks must stay below the node memory.
 
-Tested code: Stella branch `stella_dev` at df1f23bfb for tallbox, clouds and wlm; the zoom configuration lives on a zoom branch (a6fb413ef, `merge/zoom-fixes`) and is not yet in `stella_dev`.
+Tested code: Stella branch `stella_dev` at df1f23bfb for tallbox, clouds and wlm, and at 95674b7c4 (which contains the zoom configuration) for the zooms; the zooms were first run on the zoom branch a6fb413ef.
 
 ## IC conventions
 
 - Units in the hdf5 ICs: kpc, 1e10 Msun, km/s, Gauss (as the parameter files); the Gadget binary ICs carry the same units via `gadget_lunit = kpc` and masses in 1e10 Msun.
-- IDs: GIZMO uses 64-bit particle IDs. The zoom and parent Gadget ICs have 64-bit IDs (MUSIC `gadget_longids = yes`): **keep it**, a 32-bit ID block read as 64-bit gives garbage IDs on older code. The hdf5 ICs store unique uint32 IDs (converted on read); the WLM Gadget IC has 32-bit IDs, which `stella_dev` reads by the record length.
+- IDs: GIZMO uses 64-bit particle IDs. The zoom and parent Gadget ICs have 64-bit IDs (MUSIC `gadget_longids = yes`): **keep it**, a 32-bit ID block read as 64-bit gives garbage IDs on older code. The hdf5 ICs store unique uint32 IDs (converted on read), except `wlm_m10_mg1.hdf5` (uint64); the 10 Msun WLM Gadget IC has 32-bit IDs, which `stella_dev` reads by the record length.
 - Metals: on a fresh start GIZMO sets all metal fields from `InitMetallicity` (and `InitialMetallicity` for the chemistry) in the parameter file, so the metal blocks of an IC are not used; the parameter files carry the intended value of each IC.
 - Chemistry abundances: the cloud ICs carry `ChemcoolTracAbund` (old name of `SGChemTracAbund`, both read); the cloud `Config` keeps them (`SGCHEM_KEEP_IC_ABUNDANCES`), the other configs reset them.
 

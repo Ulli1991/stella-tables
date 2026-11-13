@@ -1,7 +1,6 @@
-% Stella molecular-cloud params (Config_stella_cloud.sh): production stella.params with the GMC overrides commented
-%---- Stella: resolved single-star galaxy formation model
-%---- Config: gizmo-cpp / uli-singlestar-galaxy branch
-%---- Units: kpc, 1e10 Msun, km/s (standard GIZMO galactic)
+% WLM-like isolated dwarf, Smith 2026 (Imladris, arXiv:2604.00100) m10 spec at 10 Msun gas: Stella (Config_stella_wlm.sh)
+% IN DEVELOPMENT: please contact the developer (Ulrich Steinwandel, GitHub Ulli1991) before using this set. Data: CC BY 4.0.
+% Units: kpc, 1e10 Msun, km/s. Merge/split ON (Stella default; no PREVENT_PARTICLE_MERGE_SPLIT).
 
 %---- Files
 InitCondFile                    wlm_m10_mg10.dat   % Gadget binary, see README
@@ -10,7 +9,7 @@ MaxMemSize                      4000            % MB per task: 112 tasks in 480 
 OutputDir                       output
 
 %---- Output
-TimeBetSnapshot                 0.005           % ~5 Myr
+TimeBetSnapshot                 0.010227        % 10 Myr
 TimeBetStatistics              0.0005          % ~0.5 Myr
 TimeOfFirstSnapshot             0
 SnapFormat                      3                 % HDF5
@@ -18,7 +17,7 @@ SnapFormat                      3                 % HDF5
 %---- Box & simulation time
 BoxSize                         0.0             % isolated, no periodic box
 TimeBegin                       0.0
-TimeMax                         0.511           % ~500 Myr
+TimeMax                         1.3295          % 1.3 Gyr = 300 Myr settling + 1 Gyr (Smith 2026)
 ComovingIntegrationOn           0                 % non-cosmological
 
 %---- Timestep control
@@ -39,8 +38,8 @@ UnitMagneticField_in_gauss      1.0
 %---- Gravity softening (ADAPTIVE_GRAVSOFT_FORALL for gas+stars)
 %---- These are MINIMUM softenings when adaptive softening is on
 SofteningGas                    1.0e-4            % 0.1 pc min for gas (Type 0)
-SofteningHalo                   0.050           % 50 pc DM (9750 Msun particles)
-SofteningDisk                   0.001           % 1 pc old disk stars (10 Msun particles, gravity only)
+SofteningHalo                   0.00590         % 5.9 pc = 0.75 (9749/20)^(1/3) pc (Smith 2026 rule)
+SofteningDisk                   0.000595        % 0.6 pc = 0.75 (10/20)^(1/3) pc, IC disc stars (type 2, gravity only)
 SofteningBulge                  0.020             % 20 pc bulge (Type 3)
 SofteningStars                  1.0e-4            % 0.1 pc min for spawned stars (Type 4)
 SofteningBndry                  0.005             % 5 pc sink/BH (Type 5)
@@ -86,7 +85,7 @@ SGCHEMTablesDir                 tables            % same install: energy and coo
 MaxStellarTimestep              10000.0           % 50 kyr max stellar evolution timestep [yr]
 
 %---- Initial metallicity (METALS + INIT_STELLAR_METALS_AGES_DEFINED)
-InitMetallicity                 0.15            % 0.15 Zsun gas (Lee+05)
+InitMetallicity                 0.0907          % Smith 2026: 0.1 x 0.0127 = 0.00127 absolute; our solar pattern sums to 0.014
 InitStellarAge                  10.0              % pre-existing stars: 10 Gyr old
 
 %---- MHD (MAGNETIC + MHD_B_SET_IN_PARAMS)
@@ -108,7 +107,7 @@ CosmicRayIonRate                3.0e-17           % CR ionization rate [s^-1], M
 %CosmicRayInitialCloudThreshold_nH 10.0            % cloud/ambient split [cm^-3] (MakeCloud ambient is 1e-3 of the cloud)
 DGRnormalized                   1.0               % dust-to-metal efficiency (1.0 = MW); DGR scales with local Z per particle
 DeutAbund                       2.6e-5            % primordial D/H ratio (BBN)
-InitialMetallicity              0.15            % same as InitMetallicity
+InitialMetallicity              0.0907          % same as InitMetallicity
 MaxPISearchRadius               0.05              % maximum PI search radius [kpc] (50 pc, matching gizmo2017)
 
 %---- KETJU (KETJU_REGULARIZATION + KETJU_MERGE_STARS, ADAPTIVE_GRAVSOFT_FORALL=1): best set of the N-body matrix (KOf); uncomment all
