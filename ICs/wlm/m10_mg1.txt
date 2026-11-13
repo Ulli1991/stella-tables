@@ -1,5 +1,5 @@
 % WLM-like m10 dwarf after Smith 2026 (Imladris, arXiv:2604.00100) Sec. 3.1 / Table 1.
-% DiskModel bugfixes @8b98575, MY_STRUCTURE (DiskHeight = sech2 z0 in kpc).
+% DiskModel bugfixes @0c1aa45, MY_STRUCTURE (DiskHeight = sech2 z0 in kpc).
 OutputDir      ./
 OutputFile     m10_mg1.dat
 

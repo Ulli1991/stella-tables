@@ -25,7 +25,7 @@ Softenings (paper's rule 0.75 (m / 20 Msun)^(1/3) pc for halo and initial stars;
 
 Run length: 1.3 Gyr (`TimeMax` 1.3295). The paper relaxes its IC for 300 Myr with a Jeans pressure floor and a cap on stellar lifetimes (its App. C) and analyses 100 to 1000 Myr after that. Stella has no such relaxation mode: the run starts with the full model, and the first 300 Myr are the settling phase. Snapshots every 10 Myr.
 
-Generator: Uli's modified MakeDiskGalaxy (https://github.com/Ulli1991/DiskModel, commit 8b98575 of the `bugfixes` branch, after Springel & White 1999 and Springel, Di Matteo & Hernquist 2005; build flags `-DREDSHIFT_SCALING -DV_SCALING -DMY_STRUCTURE`). Inputs `m10_mg1.txt`, `m10_mg10.txt` here:
+Generator: Uli's modified MakeDiskGalaxy (https://github.com/Ulli1991/DiskModel, commit 0c1aa45 of the `bugfixes` branch, after Springel & White 1999 and Springel, Di Matteo & Hernquist 2005; build flags `-DREDSHIFT_SCALING -DV_SCALING -DMY_STRUCTURE`). Inputs `m10_mg1.txt`, `m10_mg10.txt` here:
 ```
 ./MakeDiskGalaxy m10_mg1.txt                              # m10_mg1.dat (4.2 GB), serial, 9 min, 8.7 GB memory
 python3 check_ic.py m10_mg1.dat m10_mg1.vc                # masses, IDs, scale lengths, heights, Toomre Q, rotation curve (13 GB)
