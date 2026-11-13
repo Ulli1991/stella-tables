@@ -4,7 +4,7 @@
 
 Standard initial conditions for the Stella model in GIZMO, each shipped as a ready-to-run set: the IC file, the GIZMO parameter file, the `Config` file it was run with, the generator and its exact command, and a short "how to run". The IC files themselves are large and are **not in git**: they are release assets, fetched and hash-checked with `get_stella_ics.sh`.
 
-**Licence.** The data (tables and ICs, including the files this script downloads) are licensed CC BY 4.0, see `LICENSE-DATA` in the repository root. The scripts in this repository (generators, `get_stella_ics.sh`) are BSD 3-Clause, see `LICENSE`. Please credit the data as:
+**Licence.** The data (tables and ICs, including the files this script downloads) are licensed CC BY 4.0, see `LICENSE-DATA` in the repository root. The SGChem rate tables inherited from Arepo/SGChem (listed in `LICENSE-DATA`) are not ICs and stay under the GNU GPL, excluded from CC BY 4.0. The scripts in this repository (generators, `get_stella_ics.sh`) are BSD 3-Clause, see `LICENSE`. Please credit the data as:
 "Stella initial conditions, U. Steinwandel (2026), https://github.com/Ulli1991/stella-tables (ICs/), CC BY 4.0", and cite the papers named in the README of the set you use (generator and observational sources; the Stella paper once it is out).
 
 ## What is here

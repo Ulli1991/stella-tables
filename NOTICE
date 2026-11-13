@@ -2,6 +2,10 @@ Third-party parts of stella-tables
 
 Own code (builders, tests, helper scripts): BSD-3, see LICENSE, (c) 2026 Ulrich Steinwandel.
 
+Data licence. The data of this repository (generated tables, reference data, ICs/) are offered under CC BY 4.0 (LICENSE-DATA),
+except the GPL and MIT files named under Chemistry below and the third-party stellar inputs named further down; the exact
+exclusion list is at the top of LICENSE-DATA.
+
 Chemistry
   chemistry/sgchem/net18_source/   Built on RTZ, released under the MIT licence; Copyright (c) 2024 HarleyKatz.
                                    The MIT LICENSE stays in that directory.
@@ -9,6 +13,8 @@ Chemistry
                                    SGChem Fortran code and data by Simon Glover (ITA Heidelberg); GNU GPL as distributed
                                    in Arepo (version not stated there). Derived files keep that licence (GPL).
                                    chemistry/tables/ also holds tables inherited from CHEMCOOL/Arepo (same terms).
+  Files excluded from CC BY 4.0: chemistry/tables/eh2-table.txt, H2-cooling-ratios.dat, wss_z_collis.txt, chemistry/sgchem/chem_tables_source/,
+  sgchem_chem_tables.bin, chem_tables_data.h, and the derived energy-table-x.txt (GPL); net18_source/ and sgchem_net18_tables.bin stay MIT.
   The BSD-3 scripts only read the GPL files; the GPL parts stay in their own directories.
 
 Stellar data (stellar/data/, fetch/). The terms below were not stated in any file of this repository; where no

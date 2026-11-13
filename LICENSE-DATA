@@ -1,6 +1,14 @@
 Licensed material (CC BY 4.0): the data of this repository: the generated tables, the reference data and the initial conditions (ICs/ data files).
 Licensor: Ulrich Steinwandel, 2026. The builder code (Python scripts, tests, shell scripts) is licensed separately: see LICENSE (BSD 3-Clause).
-The unmodified licence text of CC BY 4.0 follows.
+The unmodified licence text of CC BY 4.0 follows after the exclusions below.
+
+Excluded from CC BY 4.0 (stay under their own terms, see NOTICE):
+  - GPL (SGChem/CHEMCOOL data inherited from Arepo, Simon Glover): chemistry/tables/eh2-table.txt, chemistry/tables/H2-cooling-ratios.dat,
+    chemistry/tables/wss_z_collis.txt, everything in chemistry/sgchem/chem_tables_source/, the built sgchem_chem_tables.bin and chem_tables_data.h,
+    and files derived from them, including the built energy-table-x.txt (made from eh2-table.txt). They keep the GNU GPL as distributed in Arepo.
+  - MIT (RTZ, Copyright (c) 2024 HarleyKatz): chemistry/sgchem/net18_source/ and the network 18 table built from it (sgchem_net18_tables.bin).
+  - Third-party stellar inputs and what is derived from them (MIST, PARSEC, yields, spectra, ...): terms as listed in NOTICE, not relicensed here.
+
 
 Attribution 4.0 International
 
