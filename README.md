@@ -1,3 +1,7 @@
+**Licences.** Code (Python scripts, tests, shell scripts such as `get_stella_tables.sh` and the generators under `ICs/`): BSD 3-Clause, copyright Ulrich Steinwandel, see `LICENSE`. Data (the generated tables, the reference data and the initial conditions in `ICs/`): CC BY 4.0, see `LICENSE-DATA`. Attribution for the data: "Stella tables and initial conditions, U. Steinwandel (2026), https://github.com/Ulli1991/stella-tables, CC BY 4.0", plus the papers named in the README of the table or IC set you use. Third-party inputs keep their own terms, see `NOTICE`.
+
+**In development: for the time being, please notify Ulrich Steinwandel (GitHub: Ulli1991) before using these tables or initial conditions, for example by opening an issue in this repository.**
+
 # stella-tables
 
 Builds every input table the Stella feedback model in GIZMO reads, from versioned inputs, and tests them.
@@ -11,6 +15,10 @@ python3 tests/run_all.py BUILD_DIR [--gizmo GIZMO_SRC]   # tests only
 
 Needs python3 with numpy, scipy, h5py. The `--gizmo` lookup test also needs `mpifort` and `g++` (MPCDF:
 `module load gcc openmpi gsl hwloc fftw-mpi hdf5-mpi`).
+
+## Initial conditions
+
+`ICs/` holds ready-to-run initial conditions (tallbox, molecular clouds, WLM-like dwarf, cosmological zooms and their parent boxes) with parameter files, configs and generators. The large IC files are release assets, fetched and hash-checked with `ICs/get_stella_ics.sh`; see `ICs/README.md`.
 
 ## Use from GIZMO
 

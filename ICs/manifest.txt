@@ -1,0 +1,18 @@
+# Stella initial conditions, manifest ics-v1.
+# Columns: sha256 of the file bytes (plain sha256, not the dataset hash used for the tables), size in bytes, path under ICs data root, optional parts=N.
+# Files with parts=N are stored as PATH.part000 ... PART(N-1) (each < 2 GiB, GitHub release limit); the hash and size are those of the joined file.
+# Release asset name = path with "/" replaced by "__" (plus .partNNN).
+6e31254a058eead183c8d0a69e28190f0eda7f652eef1fbb3a5e738e35959aec  1144820  clouds/gmc_Z1_m1.0.hdf5
+8074d1662c1bb5c6335b96a8d8b002dfbdb0c74393d5a42e83a7300c8331cd29  28723960  clouds/starforge_M2e4_m0.1_atomic20K.hdf5
+363575499d7af59968858c7a6f1cc1746545c55acfe5565a76b0bde0e7c6a2c2  28723960  clouds/starforge_M2e4_m0.1_mol10K.hdf5
+b0c83492522d0f5eb5c066f7e239d84a953597329f31cbf3910b089559605144  2879624  clouds/starforge_M2e4_m1.0_atomic20K.hdf5
+172bad559999044d01ee245720c9b402c88efebdb12876b432fda243567c012b  2879624  clouds/starforge_M2e4_m1.0_mol10K.hdf5
+cbeafeabde9aafa934d2a2a77c94fa46b587cf87ec7bceaa78a7a2b1724845c1  536871200  parents/boxA2_z6_parent_ic.dat
+3d28515cc5ef4a9790f3100623d205b7ab6ac8d7876407825463e0d037d3a29c  4294967584  parents/z0_parent_ic.dat  parts=3
+ebffe20a91e547385d71d62798780a0cd5d4b584ec03753a6b283ff1952c2372  1560006680  tallbox/tallbox.hdf5
+18dc540229627105380a80362e857842e9551ae82c584a05977f426521e1aec1  281139288  wlm/wlm_m10_mg10.dat
+b376851da8c8f62d9703e127737a2835ae854be4c6580cfc1e462934551dd98a  1997322992  zoom/ic_1e8_a_L12_dm.dat
+5727d244b02c9e552df615d19a372622b7241336462057abc92676dda55cef7c  3469081336  zoom/ic_1e8_a_L12_gas.dat  parts=2
+0517e9ab6ddfffa7ed876b3efe9122a87f50aae17d165fb4afd7887b29732cab  634754324  zoom/ic_1e8_c_L10_gas.dat
+e7f7ea6e7d70d9810597c4c242c48c258f8522bb5aa22931228808a6835ef940  1579112940  zoom/ic_1e8_c_L12_dm.dat
+c5bea8aadd1cde283c4de818d327eba0f56e6035d2e9f76bef47d188b16d3a9e  2602162676  zoom/ic_1e8_c_L12_gas.dat  parts=2

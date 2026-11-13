@@ -1,0 +1,46 @@
+% WLM-like m10 dwarf after Smith 2026 (Imladris, arXiv:2604.00100) Sec. 3.1 / Table 1.
+% DiskModel bugfixes @8b98575, MY_STRUCTURE (DiskHeight = sech2 z0 in kpc).
+OutputDir      ./
+OutputFile     m10_mg10.dat
+
+CC            15.0        % c = 15 (Hernquist a = 5.8 kpc, R200 = 45.4 kpc)
+V200          30.774      % M200 = V200^3/(10 G H0) = 1e10 Msun at H0 = 67.74
+LAMBDA        0.0601  % tuned: exponential scale length 1.1 kpc
+MD            0.0078      % (9.75e6 + 6.825e7)/1e10
+MB            0.0
+FBARY         0.0         % no hot gas halo
+BETA          0.5
+MBH           0.0
+JD            0.0078      % = MD
+
+GasFraction           0.875    % 6.825e7/7.8e7
+DiskHeight            0.8596   % sech2 z0 [kpc] with the same half-mass height as Gaussian sigma 0.7 kpc
+GasDiskScaleLength    1.0      % gas scale length = stellar = 1.1 kpc
+BulgeSize             0.0
+
+CoreradiusRatio       0.22
+Rhotcut               100.0
+Fspin                 4.0
+
+N_HALO           1262310
+N_DISK           975374
+N_GAS            6827620
+N_BULGE          0
+
+HI_GasMassFraction     0.0
+HI_GasDiskScaleLength  3.0
+MaxGasDiskHeight       1.0
+
+RadialDispersionFactor 1.0
+
+MaxSfrTimescale     6.09932
+FactorSN            0.1
+FactorEVP           4000
+TempSupernova       4e+08
+TempClouds          1000
+FactorForSofterEQS  0.0        % isothermal 1e4 K gas disc (hydrostatic)
+
+HUBBLE              0.6774
+REDSHIFT            0.
+Omega_m0            0.3089
+Omega_L0            0.6911

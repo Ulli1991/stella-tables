@@ -1,0 +1,50 @@
+{
+ "M_cloud_Msun": 20000.00000000001,
+ "M_bg_Msun": 4755.000000000004,
+ "N_cloud": 200000,
+ "N_bg": 47550,
+ "m_cell_Msun": 0.1,
+ "R_pc": 10.001643253991164,
+ "box_pc": 100.0,
+ "nH_mean": 138.49307301964828,
+ "rho_bg_over_rho_cloud": 0.0010005691401062835,
+ "sigma3D_kms": 3.2128678949555542,
+ "alpha_vir_2Ek_Eg": 2.000393785399129,
+ "alpha_vir_BM92": 2.0003937853991296,
+ "alpha_vir_2Ek_Eg_pairwise": null,
+ "t_ff_Myr": 3.7039641670941768,
+ "B_uG": 2.000000000000001,
+ "B_dir": [
+  0.0,
+  0.0,
+  1.0000000000008964
+ ],
+ "Emag_over_Egrav": 0.009546603865075793,
+ "alphaB_2Emag_Egrav": 0.019093207730151586,
+ "Emag_over_Eturb": 0.009544724578486935,
+ "mu_norm_0p4_def": 4.293069306861046,
+ "xH2_cloud": 0.4999,
+ "xCO_cloud": 0.00014446454,
+ "T_cloud_K": 10.0,
+ "T_bg_K": "u=77.84 (km/s)^2 as gmc_Z1_*",
+ "u_cloud_kms2": 0.0531,
+ "u_bg_kms2": 77.84,
+ "net_momentum_cloud_Msun_kms": [
+  -2.4625301797698285e-11,
+  -2.528532938583794e-13,
+  -1.0204059819329814e-11
+ ],
+ "bg_max_speed_kms": 0.0,
+ "units": {
+  "UnitLength_in_cm": 3.085678e+21,
+  "UnitMass_in_g": 1.989e+43,
+  "UnitVelocity_in_cm_per_s": 100000.0,
+  "HubbleParam": 1.0
+ },
+ "source": {
+  "raw": "raw/M2e4_R10_Z1_S0_A2_B0.1_I1.7_Res58_n2_sol0.5_42.hdf5",
+  "MakeCloud": "MakeCloud.py (git cd7b4f3)",
+  "variant": "mol10K",
+  "turb_seed": 42
+ }
+}

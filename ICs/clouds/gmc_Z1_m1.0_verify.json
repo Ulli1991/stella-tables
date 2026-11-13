@@ -1,0 +1,23 @@
+{
+ "M_cloud_Msun": 10000.0,
+ "M_bg_Msun": 2377.0,
+ "N_cloud": 10000,
+ "N_bg": 2377,
+ "m_cell_Msun": 1.0,
+ "R_pc": 7.013155,
+ "box_pc": 70.0,
+ "nH_mean": 200.093944,
+ "sigma3D_kms": 2.714747,
+ "alpha_vir_2Ek_Eg": 1.999388,
+ "alpha_vir_BM92": 2.002399,
+ "t_ff_Myr": 3.075059,
+ "xH2_cloud": 0.4999,
+ "xCO_cloud": 0.000144,
+ "T_cloud_K": 10.0,
+ "units": {
+  "UnitLength_in_cm": 3.085678e+21,
+  "UnitMass_in_g": 1.989e+43,
+  "UnitVelocity_in_cm_per_s": 100000.0,
+  "HubbleParam": 1.0
+ }
+}
