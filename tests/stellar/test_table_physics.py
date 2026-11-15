@@ -41,7 +41,6 @@ class T:
 TESTS = []
 def test(fn): TESTS.append(fn); return fn
 XFAIL = {   # known open table issues: reported, not counted as failures
-    'lifetime_monotonic_in_mass': 'MIST v1.2 tracks themselves: lifetime rises ~4% at one mass step near 1.9 Msun (1.88->1.90 at [Fe/H]=-0.5, 1.94->1.96 at -0.25)',
 }
 
 
@@ -151,15 +150,19 @@ def x_init_consistent_with_Z(t):
 
 @test
 def imf_integrated_yields(t):
-    """Kroupa IMF, 0.08-100 Msun, solar Z: CCSN+AGB metal yield 0.005-0.05 per Msun formed; Fe 3e-4-3e-3"""
+    """Kroupa IMF, 0.08-100 Msun, solar Z: CCSN + AGB + wind (M >= 8) metal yield 0.008-0.03 per Msun formed;
+    Fe 3e-4-1.5e-3 (no SN Ia)"""
     m = t.M; iz = t.iZsun; s = (m >= 0.08) & (m <= 100)
     xi = np.where(m < 0.5, m ** -1.3, 0.5 * m ** -2.3)
     w = np.gradient(m) * xi; w = w * s; w /= np.sum(w * m)
     ej = t['elem_ej_SN_mass'][iz] + t['elem_ej_AGB_mass'][iz]
+    wind_path = os.path.join(os.path.dirname(t.f.filename), 'stellar_wind_cumulative.hdf5')
+    with h5py.File(wind_path, 'r') as fw:
+        ej = ej + np.where(m[:, None] >= 8, fw['elem_ej_wind_cumulative'][iz, :, -1, :], 0.0)
     xin = t['X_init'][iz]
     net = ej - np.outer(ej.sum(1), xin)          # net = ejected minus initial composition
     yZ = np.sum(w[:, None] * net[:, 2:]); yFe = np.sum(w * net[:, ELEMS.index('Fe')])
-    return 0.005 < yZ < 0.05 and 3e-4 < yFe < 3e-3, f'y_Z={yZ:.4f} y_Fe={yFe:.2e} per Msun formed'
+    return 0.008 < yZ < 0.03 and 3e-4 < yFe < 1.5e-3, f'y_Z={yZ:.4f} y_Fe={yFe:.2e} per Msun formed'
 
 @test
 def provenance_attrs(t):
@@ -203,6 +206,26 @@ def photon_rates_nested(t):
     r = B.compute_radiation_from_lut(lT, np.full(lT.size, 5.0), lg, lZ)
     worst = max(float(np.max(r[x] - r[y] * (1 + 1e-4))) for y, x in (('Q_ion', 'Q_He0'), ('Q_He0', 'Q_He1'), ('Q_ion', 'Q_ion_H0')))
     return worst <= 0, 'max (inner - outer) photon rate on the lattice: %.3g /s (L = 1e5 Lsun)' % worst
+
+@test
+def band_composites_exact(t):
+    """every composite band (FUV, FUV_total, NUV, FUV_M1, ion_tot, Q_He0, Q_ion) is the sum of its disjoint atomic bands
+    at every node (1e-12 rel); FUV_total >= FUV_M1 >= LW, FUV_total >= FUV, Q_ion >= Q_He0 >= Q_He1; radiation finite"""
+    import build_stellar_tables as B
+    lin = lambda k: np.where(t['log_' + k] > B.LOG_FLOOR, 10.0 ** t['log_' + k], 0.0)
+    miss = [k for k in B.RAD_KEYS if 'log_' + k not in t.f]
+    if miss: return False, f'missing={miss}'
+    nonfin = [k for k in B.RAD_KEYS if not np.all(np.isfinite(t['log_' + k]))]
+    worst, wk = 0.0, None
+    for c, subs in B.RAD_COMPOSITES.items():
+        s, v = sum(lin(k) for k in subs), lin(c)
+        e = float(np.max(np.where(s > 0, abs(v / np.where(s > 0, s, 1) - 1), (v > 0) * 1.0)))
+        if e > worst: worst, wk = e, c
+    order = [('L_FUV_total', 'L_FUV_M1'), ('L_FUV_M1', 'L_LW'), ('L_FUV_total', 'L_FUV'), ('Q_ion', 'Q_He0'), ('Q_He0', 'Q_He1'),
+             ('Q_ion', 'Q_ion_H0')]
+    nbad = {f'{a}<{b}': int(np.sum(t['log_' + a] < t['log_' + b])) for a, b in order}
+    ok = worst < 1e-12 and not nonfin and not any(nbad.values())
+    return ok, f'max rel |composite/sum-1|={worst:.2e} ({wk}) nonfinite={nonfin} order violations={nbad}'
 
 def _hotstar(fn):
     """evaluate the hotstar_stack source directly (independent of the table's own source)"""

@@ -3,7 +3,7 @@
 
   reduce_tracks.py RAW_ROOT OUT_ROOT [--manifest stellar/data/reduced/MANIFEST.txt]
 
-RAW_ROOT holds mist/, parsec2_vms/, parsec1.2/, boost/ as downloaded (see fetch/). Every file in the
+RAW_ROOT holds mist_v2.5/ (or mist/ for v1.2), parsec2_vms/, parsec1.2/, boost/ as downloaded (see fetch/). Every file in the
 manifest is copied to OUT_ROOT under the same relative path. MIST *.track.eep and PARSEC v2 *.TAB tracks
 keep their header lines but only the columns whose names appear as string literals in
 build_stellar_tables.py, as the original text tokens, so the builder parses identical numbers; rows the
@@ -62,7 +62,7 @@ def main():
             os.makedirs(os.path.dirname(dst), exist_ok=True); open(dst, 'w').close(); continue
         if sha256(src) != digest: print('CHECKSUM MISMATCH', rel); bad += 1; continue
         os.makedirs(os.path.dirname(dst), exist_ok=True)
-        if rel.startswith('mist/') and rel.endswith('.track.eep'): reduce_mist(src, dst)
+        if rel.startswith(('mist/', 'mist_v2.5/')) and rel.endswith('.track.eep'): reduce_mist(src, dst)
         elif rel.startswith('parsec2_vms/') and rel.endswith('.TAB'): reduce_parsec2(src, dst)
         else: shutil.copy2(src, dst)
     if bad: sys.exit('%d input files differ from the manifest' % bad)

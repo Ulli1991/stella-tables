@@ -4,7 +4,8 @@
 #   pack_reduced.sh REDUCED_ROOT OUT_DIR
 set -euo pipefail
 R="$(cd "$1" && pwd)"; mkdir -p "$2"; O="$(cd "$2" && pwd)"
-for c in mist parsec2_vms parsec1.2 boost; do
+for c in mist mist_v2.5 parsec2_vms parsec1.2 boost; do
+    [ -d "$R/$c" ] || continue
     loose=()
     for e in "$R/$c"/*; do
         n="$(basename "$e")"
