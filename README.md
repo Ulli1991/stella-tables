@@ -9,8 +9,20 @@ GIZMO_SRC=/path/to/gizmo ./build.sh          # also test the energy table throug
 python3 tests/run_all.py BUILD_DIR [--gizmo GIZMO_SRC]   # tests only
 ```
 
-Needs python3 with numpy, scipy, h5py. The `--gizmo` lookup test also needs `mpifort` and `g++` (MPCDF:
+Needs the Python environment in `requirements-build.txt` (Python 3.14.6, numpy 2.4.6, scipy 1.18.0, h5py 3.16.0;
+MPCDF: `module load python-waterboa/2026.07`). The `--gizmo` lookup test also needs `mpifort` and `g++` (MPCDF:
 `module load gcc openmpi gsl hwloc fftw-mpi hdf5-mpi`).
+
+## Reproducible builds
+
+The tables are bit-reproducible only in one environment: numpy's exp, log, pow and sums, Python's float `sum` (3.12+)
+and scipy/LAPACK differ in the last bits between versions and CPU code paths. `build.sh` therefore checks the
+environment against `requirements-build.txt` and refuses others (`STELLA_ALLOW_ANY_ENV=1` builds anyway; the stellar
+table then differs from the published one in the last bits), runs single-threaded, and limits numpy to its baseline
+CPU code paths (`NPY_DISABLE_CPU_FEATURES`), so the pinned versions give the same bits on every x86-64 machine. Python
+float sums use `math.fsum`. The energy table is installed from `chemistry/reference/energy-table-x.txt.xz` (generator
+output in the original environment, the version GIZMO pins); each build regenerates it and the tests compare (exact
+in that environment, within 1e-13 with scipy 1.18). The table attribute `build_environment` records the versions.
 
 ## Use from GIZMO
 
