@@ -91,10 +91,15 @@ def lut_metallicity_on_z_sun(a):
 @test
 def mist_grid_z_matches_headers(a):
     """MIST grid Z used for log-Z interpolation equals the Zinit in every (non-empty) MIST track header"""
-    import glob, build_stellar_tables as B
-    root = os.path.join(a.build, 'data_root', 'mist'); worst = (0., None); n = 0
+    import glob, h5py, build_stellar_tables as B
+    with h5py.File(os.path.join(a.build, 'stellar_tables_unified.hdf5'), 'r') as f:   # the MIST grid the table used
+        B.MIST['version'] = str(f.attrs.get('mist_version', 'v1.2'))
+        afe = float(f.attrs.get('mist_alpha_fe', 0.0))
+        B.MIST['afe'] = min(B.MIST_AFE, key=lambda k: abs(B.MIST_AFE[k] - afe))
+    root = os.path.join(a.build, 'data_root', B.mist_subdir()); worst = (0., None); n = 0
+    B.configure_mist(root)
     for key, z in B.MIST_Z_GRID.items():
-        for fn in glob.glob(os.path.join(root, 'MIST_v1.2_feh_%s_*' % key, '*.track.eep')):
+        for fn in glob.glob(os.path.join(B._mist_grid_dir(root, key), '*.track.eep')):
             if os.path.getsize(fn) == 0: continue
             with open(fn) as fh: zh = float([next(fh) for _ in range(5)][4].split()[2])
             n += 1; d = abs(z / zh - 1)
