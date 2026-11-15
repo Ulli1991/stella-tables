@@ -100,6 +100,13 @@ attributes (`radiation_source*`, `atlas9_lookup_option`, `spectral_lut_sha256`).
   `radiation_coverage_*` attributes give the share of track points (and of their blackbody Q_H0, L_FUV, L_LW)
   that hit only models, a filled cell, or nothing. Default `atlas9` / `legacy`.
 
+Every source gives each track point disjoint atomic bands from one spectrum: energy bands OPT_NIR 0.4-3.4, NUV_lo
+3.4-6, NUV_hi 6-8, FUV_mid 8-11.2, LW 11.2-13.6, ion_H0 13.6-24.6, ion_He0 24.6-54.4, ion_He1 54.4-70, ion_He2 > 70 eV,
+and photon rates Q_ion_H0 13.6-24.6, Q_ion_He0 24.6-54.4, Q_He1 > 54.4 eV. Only these (and L_bol) are interpolated onto
+the table grid; the composites L_FUV (6-11.2), L_FUV_total (6-13.6), L_NUV (3.4-8), L_FUV_M1 (8-13.6), L_ion_tot,
+Q_He0 and Q_ion are written as the exact sums of their atomic bands at every node, so e.g.
+10^log_L_FUV_total - 10^log_L_FUV_M1 = 10^log_L_NUV_hi (the 6-8 eV bin).
+
 ## Wind composition
 
 `stellar_wind_cumulative.hdf5` (`elem_ej_wind_cumulative`) is what GIZMO injects as winds (from 8 Msun up). The
@@ -168,7 +175,7 @@ recorded origin. Both are checksum-locked and sanity-checked, not regenerated.
 | suite | what it checks |
 |---|---|
 | `tests/stellar/test_invariants.py` | mass and wind closure under interpolation, monotonic cumulative winds, no NaN at the grid edges |
-| `tests/stellar/test_table_physics.py` | every dataset GIZMO's loader opens, physics sanity, provenance; `--compare A B` diffs two tables |
+| `tests/stellar/test_table_physics.py` | every dataset GIZMO's loader opens, physics sanity, provenance, composite bands = sums of atomic bands; `--compare A B` diffs two tables |
 | `tests/stellar/test_extended.py` | lifetime and L_bol continuity where the track source changes, solar constants, scaled-solar mixture, spectral LUT fractions, band luminosities below L_bol, ZAMS Q_ion rising with mass, table/wind grid agreement, per-dataset fingerprints against the reference build |
 | `tests/stellar/test_wind_composition.py` | BoOST isotope columns vs `fdat-columns.txt`; end-of-wind element masses = PARSEC v2 wind ejecta enrichment for all 27 elements; Na/Al wind enrichment of massive stars; per-star wind + SN element budget = PARSEC v2 lifetime net yield (raw inputs from `BUILD_DIR/data_root`) |
 | `tests/stellar/test_yields_raw.py` | pre-SN mass = raw PARSEC v2 track final mass; ZAMS surface = X_init; K2010 Z = 1e-4 6 Msun = VW93 model; KL16 unprocessed elements follow the raw production factors; Limongi+2025 lifetime budget at solar Z (raw inputs from `BUILD_DIR/data_root`) |

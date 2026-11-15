@@ -208,6 +208,26 @@ def photon_rates_nested(t):
     worst = max(float(np.max(r[x] - r[y] * (1 + 1e-4))) for y, x in (('Q_ion', 'Q_He0'), ('Q_He0', 'Q_He1'), ('Q_ion', 'Q_ion_H0')))
     return worst <= 0, 'max (inner - outer) photon rate on the lattice: %.3g /s (L = 1e5 Lsun)' % worst
 
+@test
+def band_composites_exact(t):
+    """every composite band (FUV, FUV_total, NUV, FUV_M1, ion_tot, Q_He0, Q_ion) is the sum of its disjoint atomic bands
+    at every node (1e-12 rel); FUV_total >= FUV_M1 >= LW, FUV_total >= FUV, Q_ion >= Q_He0 >= Q_He1; radiation finite"""
+    import build_stellar_tables as B
+    lin = lambda k: np.where(t['log_' + k] > B.LOG_FLOOR, 10.0 ** t['log_' + k], 0.0)
+    miss = [k for k in B.RAD_KEYS if 'log_' + k not in t.f]
+    if miss: return False, f'missing={miss}'
+    nonfin = [k for k in B.RAD_KEYS if not np.all(np.isfinite(t['log_' + k]))]
+    worst, wk = 0.0, None
+    for c, subs in B.RAD_COMPOSITES.items():
+        s, v = sum(lin(k) for k in subs), lin(c)
+        e = float(np.max(np.where(s > 0, abs(v / np.where(s > 0, s, 1) - 1), (v > 0) * 1.0)))
+        if e > worst: worst, wk = e, c
+    order = [('L_FUV_total', 'L_FUV_M1'), ('L_FUV_M1', 'L_LW'), ('L_FUV_total', 'L_FUV'), ('Q_ion', 'Q_He0'), ('Q_He0', 'Q_He1'),
+             ('Q_ion', 'Q_ion_H0')]
+    nbad = {f'{a}<{b}': int(np.sum(t['log_' + a] < t['log_' + b])) for a, b in order}
+    ok = worst < 1e-12 and not nonfin and not any(nbad.values())
+    return ok, f'max rel |composite/sum-1|={worst:.2e} ({wk}) nonfinite={nonfin} order violations={nbad}'
+
 def _hotstar(fn):
     """evaluate the hotstar_stack source directly (independent of the table's own source)"""
     import build_stellar_tables as B

@@ -75,20 +75,31 @@ COMBO_BANDS = {
     'ion_tot':   ['ion_H0', 'ion_He0', 'ion_He1', 'ion_He2'],    # >13.6 eV total ionizing
 }
 
-# Full list of radiation keys in track/resampled dicts
-# (names without log_ prefix; resampled dicts add log_ prefix)
-RAD_KEYS = (
-    ['L_' + name for name, _, _ in ENERGY_BANDS]
-    + ['L_' + name for name in COMBO_BANDS]
-    + ['L_bol']
-    + [name for name, _, _ in PHOTON_RATE_BANDS]
-)
+# Disjoint photon-rate bands and their composites (PHOTON_RATE_BANDS are the source LUT columns)
+PHOTON_ATOMIC = ['Q_ion_H0', 'Q_ion_He0', 'Q_He1']                 # 13.6-24.6, 24.6-54.4, > 54.4 eV
+PHOTON_COMBO = {'Q_He0': ['Q_ion_He0', 'Q_He1'], 'Q_ion': ['Q_ion_H0', 'Q_ion_He0', 'Q_He1']}
+
+# Radiation keys in track/resampled dicts (resampled dicts add log_ prefix); only atomic keys are interpolated,
+# composites are exact sums of their atomic bands (compose_bands)
+RAD_ATOMIC_KEYS = ['L_' + name for name, _, _ in ENERGY_BANDS] + ['L_bol'] + PHOTON_ATOMIC
+RAD_COMPOSITES = dict([('L_' + c, ['L_' + s for s in subs]) for c, subs in COMBO_BANDS.items()] + list(PHOTON_COMBO.items()))
+RAD_KEYS = RAD_ATOMIC_KEYS + list(RAD_COMPOSITES)
+
+
+def compose_bands(d, log=False):
+    """set every composite in d to the sum of its atomic bands (log: log10 values, LOG_FLOOR = zero)"""
+    for c, subs in RAD_COMPOSITES.items():
+        if log:
+            s = sum(np.where(d[k] > LOG_FLOOR, 10.0 ** np.maximum(d[k], LOG_FLOOR), 0.0) for k in subs)
+            d[c] = np.where(s > 0, np.log10(np.where(s > 0, s, 1.0)), LOG_FLOOR)
+        else:
+            d[c] = sum(d[k] for k in subs)
 
 # HDF5 dataset descriptions for each radiation key
 RAD_DESCRIPTIONS = {
     'L_OPT_NIR':  'log10(erg/s), 0.4-3.4 eV, optical+NIR (M1 RT)',
     'L_NUV_lo':   'log10(erg/s), 3.4-6.0 eV, near-UV low',
-    'L_NUV_hi':   'log10(erg/s), 6.0-8.0 eV, near-UV high',
+    'L_NUV_hi':   'log10(erg/s), 6.0-8.0 eV, near-UV high (= L_FUV_total - L_FUV_M1 exactly)',
     'L_FUV_mid':  'log10(erg/s), 8.0-11.2 eV, far-UV mid',
     'L_LW':       'log10(erg/s), 11.2-13.6 eV, Lyman-Werner',
     'L_ion_H0':   'log10(erg/s), 13.6-24.6 eV, H ionizing',
@@ -103,6 +114,7 @@ RAD_DESCRIPTIONS = {
     'L_bol':       'log10(erg/s), bolometric',
     'Q_ion':       'log10(photons/s), > 13.6 eV, total ionizing photons',
     'Q_ion_H0':    'log10(photons/s), 13.6-24.6 eV, H ionizing photons',
+    'Q_ion_He0':   'log10(photons/s), 24.6-54.4 eV, He0 (not He+) ionizing photons',
     'Q_He0':       'log10(photons/s), > 24.6 eV, He0 ionizing photons',
     'Q_He1':       'log10(photons/s), > 54.4 eV, He+ ionizing photons',
 }
@@ -472,10 +484,11 @@ def compute_radiation_from_lut(logTeff_arr, logL_arr, logg_arr, logZ_arr, tag=No
                'L_FUV': L_erg * (ef['NUV_hi'] + ef['FUV_mid']), 'L_LW': L_erg * ef['LW']}
         RAD_COVERAGE[tag] = {k: [float(np.sum(w[cls == c])) for c in (0, 1, 2)] for k, w in wts.items()}
     result = {'L_' + n: L_erg * ef[n] for n, _, _ in ENERGY_BANDS}
-    result.update({n: L_erg * qf[n] for n, _, _ in PHOTON_RATE_BANDS})
-    for combo_name, sub_names in COMBO_BANDS.items():
-        result['L_' + combo_name] = sum(result['L_' + s] for s in sub_names)
     result['L_bol'] = L_erg.copy()
+    result['Q_ion_H0'] = L_erg * qf['Q_ion_H0']
+    result['Q_ion_He0'] = L_erg * np.maximum(qf['Q_He0'] - qf['Q_He1'], 0.0)
+    result['Q_He1'] = L_erg * qf['Q_He1']
+    compose_bands(result)
     return result
 
 
@@ -1188,7 +1201,7 @@ def resample_onto_age_grid(track, log_age_grid):
         result[key] = interp
 
     # Radiation: store as log, floor when dead
-    for key in RAD_KEYS:
+    for key in RAD_ATOMIC_KEYS:
         vals = track[key][mask]
         log_vals = np.where(vals > 0, np.log10(vals), LOG_FLOOR)
         interp = np.interp(log_age_grid, log_age_track, log_vals, left=log_vals[0], right=LOG_FLOOR)
@@ -1337,7 +1350,7 @@ def _resample_track_onto_tau_grid(track, tau_grid):
         result[key] = np.interp(tau_grid, tau_track, vals, left=vals[0], right=vals[-1])
 
     # Radiation: store as log
-    for key in RAD_KEYS:
+    for key in RAD_ATOMIC_KEYS:
         vals = track[key][mask]
         log_vals = np.where(vals > 0, np.log10(vals), LOG_FLOOR)
         result['log_' + key] = np.interp(tau_grid, tau_track, log_vals,
@@ -1428,7 +1441,7 @@ def _blend_tau(r_lo, r_hi, f, M_target=None):
     interp = {}
 
     # Log-scale quantities (structural + radiation)
-    log_keys = ['logL', 'logTeff', 'logR_cm', 'log_Mdot'] + ['log_' + k for k in RAD_KEYS]
+    log_keys = ['logL', 'logTeff', 'logR_cm', 'log_Mdot'] + ['log_' + k for k in RAD_ATOMIC_KEYS]
     for key in log_keys:
         lo, hi = r_lo[key], r_hi[key]
         alive = (lo > LOG_FLOOR + 1) & (hi > LOG_FLOOR + 1)
@@ -1517,7 +1530,7 @@ def _tau_to_age(interp, tau_grid, log_age_grid):
     result = {}
 
     # Resample log-scale quantities onto log_age_grid
-    for key in ['logL', 'logTeff', 'logR_cm', 'log_Mdot'] + ['log_' + k for k in RAD_KEYS]:
+    for key in ['logL', 'logTeff', 'logR_cm', 'log_Mdot'] + ['log_' + k for k in RAD_ATOMIC_KEYS]:
         vals = interp[key][valid]
         resampled = np.interp(log_age_grid, log_age_phys, vals, left=vals[0], right=LOG_FLOOR)
         resampled[log_age_grid > log_lifetime] = LOG_FLOOR
@@ -1584,7 +1597,7 @@ def _interpolate_two_tracks(r_lo, r_hi, f):
     NOTE: Legacy absolute-age interpolation, kept for reference.
     New code uses _interpolate_two_tracks_tau for mass interpolation."""
     result = {}
-    for key in ['logL', 'logTeff', 'logR_cm', 'log_Mdot'] + ['log_' + k for k in RAD_KEYS]:
+    for key in ['logL', 'logTeff', 'logR_cm', 'log_Mdot'] + ['log_' + k for k in RAD_ATOMIC_KEYS]:
         lo, hi = r_lo[key], r_hi[key]
         alive = (lo > LOG_FLOOR + 1) & (hi > LOG_FLOOR + 1)
         interp = np.full_like(lo, LOG_FLOOR)
@@ -3076,7 +3089,7 @@ def build_all(base_dir, output_file):
             M_CO_core_arr[iz, im] = result.get('M_CO_core', 0.0)
             M_He_core_arr[iz, im] = result.get('M_He_core', 0.0)
 
-            for key in RAD_KEYS:
+            for key in RAD_ATOMIC_KEYS:
                 rad_data[key][iz, im] = result['log_' + key]
             logR_cm[iz, im]   = result['logR_cm']
             logL[iz, im]      = result['logL']
@@ -3122,7 +3135,7 @@ def build_all(base_dir, output_file):
             if best_jz < 0:
                 continue  # no valid tracks at all (shouldn't happen)
             # Copy all arrays from the donor entry
-            for key in RAD_KEYS:
+            for key in RAD_ATOMIC_KEYS:
                 rad_data[key][iz, im] = rad_data[key][best_jz, best_jm]
             logR_cm[iz, im]   = logR_cm[best_jz, best_jm]
             logL[iz, im]      = logL[best_jz, best_jm]
@@ -3146,6 +3159,9 @@ def build_all(base_dir, output_file):
                   f"(d_log={np.sqrt(best_dist):.3f})")
     if n_filled > 0:
         print(f"  Filled {n_filled} gap(s) with nearest-neighbor tracks")
+
+    # composites (FUV_total, FUV_M1, Q_ion, ...) as exact sums of the interpolated atomic bands
+    compose_bands(rad_data, log=True)
 
     # M_preSN is filled per-track in the loop above via result['M_preSN_scalar']
 
