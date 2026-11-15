@@ -3,14 +3,17 @@
 Builds every input table the Stella feedback model in GIZMO reads, from versioned inputs, and tests them.
 
 ```
+module load python-waterboa/2026.07          # MPCDF: the pinned environment (requirements-build.txt)
 ./build.sh                                   # stellar + chemistry tables into build/, then the full test suite
+STELLA_ALLOW_ANY_ENV=1 ./build.sh            # any other environment (refused otherwise); last-bit differences
 GIZMO_SRC=/path/to/gizmo ./build.sh          # also test the energy table through GIZMO's Fortran and C++ lookups
 ./build.sh --raw RAW_ROOT                    # re-derive the reduced track catalogues from the full downloads first
 python3 tests/run_all.py BUILD_DIR [--gizmo GIZMO_SRC]   # tests only
 ```
 
 Needs the Python environment in `requirements-build.txt` (Python 3.14.6, numpy 2.4.6, scipy 1.18.0, h5py 3.16.0;
-MPCDF: `module load python-waterboa/2026.07`). The `--gizmo` lookup test also needs `mpifort` and `g++` (MPCDF:
+MPCDF: `module load python-waterboa/2026.07`); `python3 check_build_env.py` lists any mismatch, and `build.sh`
+stops on one unless `STELLA_ALLOW_ANY_ENV=1`. Prebuilt tables: the GitHub releases (`tables-<commit>`). The `--gizmo` lookup test also needs `mpifort` and `g++` (MPCDF:
 `module load gcc openmpi gsl hwloc fftw-mpi hdf5-mpi`).
 
 ## Reproducible builds
