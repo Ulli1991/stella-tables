@@ -24,6 +24,7 @@ Usage:
 """
 
 import numpy as np
+trapz = getattr(np, 'trapezoid', None) or np.trapz   # numpy >= 2 renamed it
 import os
 import sys
 import re
@@ -39,8 +40,8 @@ from build_stellar_tables import (
 # Configuration
 # ═══════════════════════════════════════════════════════════════
 
-SPECTRA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'spectra')
-LUT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'spectral_band_lut.hdf5')
+SPECTRA_DIR = os.environ.get('STELLA_SPECTRA_DIR', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'spectra'))
+LUT_FILE = os.environ.get('STELLA_SPECTRAL_LUT_OUT', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'spectral_band_lut.hdf5'))
 
 # Energy ↔ wavelength: E(eV) = hc / lambda → lambda(A) = 12398.42 / E(eV)
 HC_eV_A = h_planck * c_light / eV_to_erg * 1e8  # 12398.42 eV*A
@@ -143,7 +144,7 @@ def download_phoenix():
     os.makedirs(phoenix_dir, exist_ok=True)
 
     # Download wavelength grid first
-    wave_url = f'{PHOENIX_BASE_URL}/WAVE_PHOENIX-ACES-AGSS-COND-2011.fits'
+    wave_url = PHOENIX_BASE_URL.rsplit('/', 1)[0] + '/WAVE_PHOENIX-ACES-AGSS-COND-2011.fits'   # one level above the grid
     wave_file = os.path.join(phoenix_dir, 'WAVE_PHOENIX-ACES-AGSS-COND-2011.fits')
     if not os.path.exists(wave_file):
         print("  Downloading PHOENIX wavelength grid...")
@@ -164,8 +165,7 @@ def download_phoenix():
 
         for teff in teffs:
             for logg in loggs:
-                sign = '+' if mh >= 0 else ''
-                fname = f'lte{teff:05d}-{logg:.2f}{sign}{mh:.1f}.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'
+                fname = f'lte{teff:05d}-{logg:.2f}{z_code[1:]}.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'   # Z-0.0 -> -0.0
                 outfile = os.path.join(z_dir, fname)
                 if os.path.exists(outfile):
                     continue
@@ -325,6 +325,13 @@ def parse_phoenix_fits(filepath, wave_filepath):
 # SECTION 3: Band integration
 # ═══════════════════════════════════════════════════════════════
 
+def _trapz_range(x, y, a, b):
+    """integral of the piecewise-linear y(x) over [a, b], including the partial intervals at both ends"""
+    i = (x > a) & (x < b)
+    xs = np.concatenate([[a], x[i], [b]]); ys = np.concatenate([[np.interp(a, x, y)], y[i], [np.interp(b, x, y)]])
+    return trapz(ys, xs)
+
+
 def integrate_bands(wavelength_A, F_lambda):
     """Integrate a spectrum over all energy bands.
 
@@ -342,7 +349,7 @@ def integrate_bands(wavelength_A, F_lambda):
         F_lambda = F_lambda[::-1]
 
     # Total flux (bolometric)
-    F_total = np.trapz(F_lambda, wavelength_A)
+    F_total = trapz(F_lambda, wavelength_A)
     if F_total <= 0:
         return ({name: 0.0 for name, _, _ in ENERGY_BANDS},
                 {name: 0.0 for name, _, _ in PHOTON_RATE_BANDS})
@@ -365,13 +372,7 @@ def integrate_bands(wavelength_A, F_lambda):
             energy_fracs[name] = 0.0
             continue
 
-        # Select wavelength range and integrate
-        mask = (wavelength_A >= lam_lo) & (wavelength_A <= lam_hi)
-        if np.sum(mask) < 2:
-            energy_fracs[name] = 0.0
-            continue
-
-        F_band = np.trapz(F_lambda[mask], wavelength_A[mask])
+        F_band = _trapz_range(wavelength_A, F_lambda, lam_lo, lam_hi)   # band edges interpolated
         energy_fracs[name] = F_band / F_total
 
     photon_rates_per_L = {}
@@ -386,16 +387,9 @@ def integrate_bands(wavelength_A, F_lambda):
             photon_rates_per_L[name] = 0.0
             continue
 
-        mask = (wavelength_A >= lam_lo) & (wavelength_A <= lam_hi)
-        if np.sum(mask) < 2:
-            photon_rates_per_L[name] = 0.0
-            continue
-
-        # Photon integral: ∫ (F_lambda * lambda / hc) d_lambda
-        # Each photon has energy E = hc/lambda, so N_photons = F_lambda * dlambda / (hc/lambda)
-        wl_cm = wavelength_A[mask] * 1e-8  # A → cm
-        photon_integrand = F_lambda[mask] * wl_cm / (h_planck * c_light)  # photons/s/cm^2/A
-        Q_band = np.trapz(photon_integrand, wavelength_A[mask])  # photons/s/cm^2
+        # Photon integral: ∫ (F_lambda * lambda / hc) d_lambda (band edges interpolated)
+        photon_integrand = F_lambda * wavelength_A * 1e-8 / (h_planck * c_light)  # photons/s/cm^2/A
+        Q_band = _trapz_range(wavelength_A, photon_integrand, lam_lo, lam_hi)   # photons/s/cm^2
 
         # Q_per_L_unit: photons/s per erg/s of bolometric luminosity
         # Q = 4π R^2 Q_band, L_bol = 4π R^2 F_total → Q/L_bol = Q_band/F_total
