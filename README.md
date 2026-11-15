@@ -61,11 +61,15 @@ catalogues gives tables identical to building from the full downloads (checked p
 
 ## Track stitching
 
-MIST (below 2 Msun) and PARSEC v2 (from 2 Msun) are each interpolated in log Z between their bracketing
-metallicity grids, in fractional-lifetime space, and blended linearly in log M over 2.0-2.5 Msun
-(`MASS_STITCH_P2_LO`, `MASS_STITCH_P2_FULL`). Truncated catalogue tracks are skipped in the mass bracketing.
-`track_source` marks the dominant catalogue (blend weight >= 0.5). MIST grids sit at their own initial Z
-(track headers: Zinit = 1.42857e-2 x 10^[Fe/H]), PARSEC v2 at the Z of its grid.
+MIST v2.5 (below 2 Msun; `--mist v1.2` for the old release) and PARSEC v2 (from 2 Msun) are each interpolated in
+log Z between their bracketing metallicity grids, in fractional-lifetime space, and blended linearly in log M over
+2.0-2.5 Msun (`MASS_STITCH_P2_LO`, `MASS_STITCH_P2_FULL`). Truncated catalogue tracks are skipped in the mass
+bracketing (MIST v2.5 [Fe/H] = +0.5 ends its 0.10-0.45 Msun tracks before the main sequence; the next grid down is
+used). MIST is read up to 3 Msun (`MIST_M_MAX`). `track_source` marks the dominant catalogue (blend weight >= 0.5).
+Both catalogues start the table age at the same ZAMS, central H down by 1e-4, so t_PMS and lifetimes join across the
+blend. Grid Z = the Zinit of each grid's track headers. MIST v2.5 [a/Fe] (`--mist-alpha-fe`, default p0 =
+solar-scaled, matching the birth composition X_init); at fixed total Z, +0.4 changes MS lifetimes by <= 1% for
+Z <= 1e-3 and by 2-8% for 1-2 Msun at Z = 0.01.
 
 ## Radiation
 
@@ -98,7 +102,14 @@ attributes (`radiation_source*`, `atlas9_lookup_option`, `spectral_lut_sha256`).
     point is off the grid.
 
   `radiation_coverage_*` attributes give the share of track points (and of their blackbody Q_H0, L_FUV, L_LW)
-  that hit only models, a filled cell, or nothing. Default `atlas9` / `legacy`.
+  that hit only models, a filled cell, or nothing.
+
+`build.sh` uses `hotstar_stack` (log g and Z dependence, hot and WR stars); `atlas9` / `legacy` was the default up to
+the tables GIZMO pinned at a4830ab, whose attribute wrongly said "Planck".
+
+Band integrals of every model spectrum include the partial wavelength intervals at the band edges
+(`build_spectral_lut.integrate_bands`). Radiation is stored as the time average over each age-grid cell (edges at the
+log-age midpoints, cut at death), so short post-main-sequence phases keep their time integral.
 
 Every source gives each track point disjoint atomic bands from one spectrum: energy bands OPT_NIR 0.4-3.4, NUV_lo
 3.4-6, NUV_hi 6-8, FUV_mid 8-11.2, LW 11.2-13.6, ion_H0 13.6-24.6, ion_He0 24.6-54.4, ion_He1 54.4-70, ion_He2 > 70 eV,
@@ -120,8 +131,10 @@ linearly in log M into PARSEC v2 over 12-14 Msun; above the BoOST metallicities 
 14 Msun. The timing follows the track: x_k(t) = X_init,k + net_k f(t) / sum f dM, f = the track's surface He
 excess scaled to peak 1 (0 at ZAMS), raised where needed so that no element goes negative; the sum over elements is 1
 at every step and the end-of-wind totals are X_init W + net exactly. An element is at most fully absent from the
-wind (net >= -X_init W, rest to H). Below 8 Msun (not injected by GIZMO) the wind and `surface_abundances` are
-X_init plus the track's own surface change since ZAMS; for M >= 8 `surface_abundances` holds the wind fractions.
+wind (net >= -X_init W, rest to H). Below 8 Msun the table has no wind, as GIZMO injects none there: M_current =
+M_init during the star's life, M_preSN = M_init, and the AGB event carries the whole Karakas lifetime budget.
+`surface_abundances` is X_init plus the track's own surface change since ZAMS; for M >= 8 it holds the wind fractions.
+MIST tracks end at the hottest post-AGB point (MIST v2.5 continues through white-dwarf cooling).
 
 ## Yields
 
@@ -187,7 +200,11 @@ Expected failures (XFAIL) are listed in the test output with their reason and do
 
 ## Known limitations
 
-* MIST v1.2's own tracks have a ~4% lifetime uptick at one mass step near 1.9 Msun ([Fe/H] = -0.5, -0.25),
-  which the table reproduces (XFAIL in `test_table_physics.py`).
-* Above the catalogue metallicity ranges (PARSEC v2 Z > 0.03, MIST Z > 0.0425) tracks are held at the edge.
-* The BoOST download location is not confirmed (`fetch/README.md`); no BoOST track enters the current build.
+* MIST v2.5's own tracks peak in post-MS duration at the He-flash transition (+0.13 dex from 1.95 to 2.0 Msun at
+  [Fe/H] = -0.25), which the table reproduces (XFAIL `blend_edges_continuous_post_ms` in `test_extended.py`).
+* Above the catalogue metallicity ranges (PARSEC v2 Z > 0.03, MIST v2.5 Z > 0.047) tracks are held at the edge, so
+  lifetimes and remnants at Z = 0.04, 0.06 equal those at the top grid; yields and winds follow each Z's X_init.
+* The BoOST download location is not confirmed (`fetch/README.md`); BoOST enters only the wind composition of
+  8-14 Msun stars.
+* Q(He+) of massive stars differs from the PARSEC v2 photon tables by up to 3 dex in either direction (different
+  atmospheres; the literature spread is orders of magnitude), printed by `tests/stellar/test_radiation.py`.

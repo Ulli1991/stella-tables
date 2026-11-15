@@ -205,26 +205,54 @@ MIST_SURFACE_ELEM = {
     'N':  ['surface_n14'],
     'O':  ['surface_o16'],
     'F':  ['surface_f19'],
-    'Ne': ['surface_ne20'],
+    'Ne': ['surface_ne20', 'surface_ne21', 'surface_ne22'],
     'Na': ['surface_na23'],
-    'Mg': ['surface_mg24'],
-    'Al': [],               # not in MIST → solar-scaled
-    'Si': ['surface_si28'],
-    'S':  ['surface_s32'],
+    'Mg': ['surface_mg24', 'surface_mg25', 'surface_mg26', 'surface_al26'],   # 26Al -> 26Mg
+    'Al': ['surface_al27'],
+    'Si': ['surface_si28', 'surface_si29', 'surface_si30'],
+    'P':  ['surface_p31'],
+    'S':  ['surface_s32', 'surface_s33', 'surface_s34'],
     'Ca': ['surface_ca40'],
     'Ti': ['surface_ti48'],
     'Fe': ['surface_fe56'],
 }
 
-# MIST v1.2 initial Z: the track headers give Zinit = 1.42857e-2 * 10^[Fe/H] (MIST's own protosolar scale)
-MIST_ZINIT_SOLAR = 1.42857e-2
-MIST_FEH_GRID = {
-    'm4.00': -4.0, 'm3.50': -3.5, 'm3.00': -3.0, 'm2.50': -2.5,
-    'm2.00': -2.0, 'm1.75': -1.75, 'm1.50': -1.5, 'm1.25': -1.25,
-    'm1.00': -1.0, 'm0.75': -0.75, 'm0.50': -0.5, 'm0.25': -0.25,
-    'p0.00': 0.0, 'p0.25': 0.25, 'p0.50': 0.5,
-}
-MIST_Z_GRID = {feh_str: MIST_ZINIT_SOLAR * 10**feh_val for feh_str, feh_val in MIST_FEH_GRID.items()}
+# MIST release and [a/Fe] (set from the command line). Grid Z = Zinit of the grid's track headers (configure_mist).
+MIST = {'version': 'v2.5', 'afe': 'p0'}
+MIST_VERSIONS = ('v2.5', 'v1.2')
+MIST_AFE = {'m2': -0.2, 'p0': 0.0, 'p2': 0.2, 'p4': 0.4, 'p6': 0.6}   # v2.5 only; v1.2 is solar-scaled
+MIST_M_MAX = 3.0   # MIST tracks read up to this mass (MIST below 2.0, blended into PARSEC v2 up to 2.5 Msun)
+MIST_FEH_GRID, MIST_Z_GRID = {}, {}
+
+
+def _mist_grid_dir(mist_dir, feh_str):
+    if MIST['version'] == 'v1.2':
+        return os.path.join(mist_dir, f'MIST_v1.2_feh_{feh_str}_afe_p0.0_vvcrit0.0_EEPS')
+    return os.path.join(mist_dir, f"feh_{feh_str}_afe_{MIST['afe']}_vvcrit0.0", 'eeps')
+
+
+def mist_subdir():
+    return 'mist' if MIST['version'] == 'v1.2' else 'mist_v2.5'
+
+
+def configure_mist(mist_dir):
+    """fill MIST_FEH_GRID / MIST_Z_GRID from the grids present: [Fe/H] and Zinit from the first track header"""
+    MIST_FEH_GRID.clear(); MIST_Z_GRID.clear()
+    if MIST['version'] == 'v1.2':
+        fehs = [d.split('_feh_')[1].split('_')[0] for d in glob(os.path.join(mist_dir, 'MIST_v1.2_feh_*_afe_p0.0_vvcrit0.0_EEPS'))]
+    else:
+        fehs = [os.path.basename(d).split('_')[1] for d in glob(os.path.join(mist_dir, f"feh_*_afe_{MIST['afe']}_vvcrit0.0"))]
+    for feh_str in fehs:
+        for f in sorted(glob(os.path.join(_mist_grid_dir(mist_dir, feh_str), '*M.track.eep'))):
+            if os.path.getsize(f) == 0:
+                continue
+            with open(f) as fh:
+                for line in fh:
+                    if 'Zinit' in line:
+                        v = next(fh).lstrip('#').split()
+                        MIST_Z_GRID[feh_str], MIST_FEH_GRID[feh_str] = float(v[1]), float(v[2])
+                        break
+            break
 
 # PARSEC v2 VMS surface columns → element mapping (from .TAB track files)
 # Only 7 surface elements available; rest use initial composition (solar-scaled)
@@ -899,20 +927,23 @@ def discover_mist_tracks(mist_dir):
     """Index all MIST EEP tracks. Returns dict: (feh_str, M_init) → filepath."""
     index = {}
     for feh_str in MIST_FEH_GRID:
-        dirname = f'MIST_v1.2_feh_{feh_str}_afe_p0.0_vvcrit0.0_EEPS'
-        full = os.path.join(mist_dir, dirname)
+        full = _mist_grid_dir(mist_dir, feh_str)
         if not os.path.isdir(full):
             continue
         for f in glob(os.path.join(full, '*M.track.eep')):
             m = re.match(r'(\d+)M\.track\.eep', os.path.basename(f))
-            if m:
+            if m and int(m.group(1)) / 100.0 <= MIST_M_MAX:
                 M = int(m.group(1)) / 100.0
                 index[(feh_str, M)] = f
     return index
 
 
+TRACK_READS = set()   # files read by the track loaders (written to $STELLA_TRACE_READS for reduce_tracks.py's manifest)
+
+
 def mist_track_to_common(filepath):
     """Load MIST EEP track and return standardized dict. Returns None if truncated."""
+    TRACK_READS.add(os.path.abspath(filepath))
     col_names = None
     data_lines = []
     with open(filepath) as fh:
@@ -930,6 +961,12 @@ def mist_track_to_common(filepath):
 
     arr = np.array(data_lines)
     d = {name: arr[:, i] for i, name in enumerate(col_names)}
+    if 'phase' in d:   # end at the hottest post-AGB point (MIST v2.5 continues through white-dwarf cooling; phase -9 row)
+        keep = d['phase'] >= -1
+        pa = np.where(keep & (np.round(d['phase']) == 6))[0]
+        if pa.size:
+            keep[pa[int(np.argmax(d['log_Teff'][pa]))] + 1:] = False
+        d = {k: v[keep] for k, v in d.items()}
 
     age_yr = d['star_age']
     M_cur = d['star_mass']
@@ -970,6 +1007,11 @@ def mist_track_to_common(filepath):
         phase = np.array([MIST_PHASE_MAP.get(int(round(p)), 1) for p in d['phase']])
     else:
         phase = np.ones(len(age_yr), dtype=int)
+    if 'center_h1' in d:   # ZAMS as for PARSEC v2: central H down by 1e-4 (MIST's EEP ZAMS sits earlier)
+        zams = int(np.argmax(d['center_h1'] < d['center_h1'][0] - 1e-4))
+        if zams > 0:
+            phase[:zams] = 0
+            phase[zams:][phase[zams:] == 0] = 1
 
     phase_transitions = extract_phase_transitions(age_yr, phase)
 
@@ -1204,9 +1246,7 @@ def resample_onto_age_grid(track, log_age_grid):
     for key in RAD_ATOMIC_KEYS:
         vals = track[key][mask]
         log_vals = np.where(vals > 0, np.log10(vals), LOG_FLOOR)
-        interp = np.interp(log_age_grid, log_age_track, log_vals, left=log_vals[0], right=LOG_FLOOR)
-        interp[log_age_grid > log_lifetime] = LOG_FLOOR
-        result['log_' + key] = interp
+        result['log_' + key] = _cell_average_log(log_age_grid, age[mask], log_vals, lifetime)
 
     # Linear quantities (0 when dead)
     for key in ['M_current', 'v_wind']:
@@ -1512,6 +1552,25 @@ def _blend_tau(r_lo, r_hi, f, M_target=None):
     return interp
 
 
+def _cell_average_log(log_age_grid, age_fine, log_vals, lifetime):
+    """log10 of the time average of 10^log_vals over each age-grid cell (edges at the log-age midpoints, cut at death):
+    radiation integrated over time is kept where a single age point would miss short post-MS phases"""
+    lin = np.where(log_vals > LOG_FLOOR + 1, 10.0 ** np.maximum(log_vals, LOG_FLOOR), 0.0)
+    C = np.concatenate([[0.0], np.cumsum(0.5 * (lin[1:] + lin[:-1]) * np.diff(age_fine))])
+    lg = log_age_grid
+    e = 10.0 ** np.concatenate([[lg[0] - 0.5 * (lg[1] - lg[0])], 0.5 * (lg[1:] + lg[:-1]), [lg[-1] + 0.5 * (lg[-1] - lg[-2])]])
+    a, b = np.clip(e[:-1], age_fine[0], lifetime), np.clip(e[1:], age_fine[0], lifetime)
+    avg = np.where(b > a, (np.interp(b, age_fine, C) - np.interp(a, age_fine, C)) / np.where(b > a, b - a, 1.0),
+                   np.interp(np.clip(10.0 ** lg, age_fine[0], age_fine[-1]), age_fine, lin))
+    out = np.where(avg > 0, np.log10(np.where(avg > 0, avg, 1.0)), LOG_FLOOR)
+    dead = e[:-1] >= lifetime             # cells that start after death
+    out[dead] = LOG_FLOOR
+    j = int(np.argmax(dead))
+    if dead[j] and j > 0:                 # the first point after death repeats the last value, so the interpolation
+        out[j] = out[j - 1]               # stays flat until death (GIZMO ends the star at lifetime_yr)
+    return out
+
+
 def _tau_to_age(interp, tau_grid, log_age_grid):
     """Map a tau-grid track back to physical age and resample onto log_age_grid."""
     lifetime = interp['lifetime']
@@ -1530,11 +1589,14 @@ def _tau_to_age(interp, tau_grid, log_age_grid):
     result = {}
 
     # Resample log-scale quantities onto log_age_grid
-    for key in ['logL', 'logTeff', 'logR_cm', 'log_Mdot'] + ['log_' + k for k in RAD_ATOMIC_KEYS]:
+    for key in ['logL', 'logTeff', 'logR_cm', 'log_Mdot']:
         vals = interp[key][valid]
         resampled = np.interp(log_age_grid, log_age_phys, vals, left=vals[0], right=LOG_FLOOR)
         resampled[log_age_grid > log_lifetime] = LOG_FLOOR
         result[key] = resampled
+    # radiation: time average over each age cell (keeps the time integral through short phases)
+    for key in ['log_' + k for k in RAD_ATOMIC_KEYS]:
+        result[key] = _cell_average_log(log_age_grid, age_phys[valid], interp[key][valid], lifetime)
 
     # Resample linear quantities
     for key in ['M_current', 'v_wind']:
@@ -2925,7 +2987,8 @@ def build_all(base_dir, output_file):
 
     parsec_dir = os.path.join(base_dir, 'parsec1.2')
     boost_dir  = os.path.join(base_dir, 'boost')
-    mist_dir   = os.path.join(base_dir, 'mist')
+    mist_dir   = os.path.join(base_dir, mist_subdir())
+    configure_mist(mist_dir)
     p2_dir     = os.path.join(base_dir, 'parsec2_vms')
 
     # ── Discover all tracks ──
@@ -3059,9 +3122,13 @@ def build_all(base_dir, output_file):
                 if result is not None:
                     src = 3
             if result is None and mist_feh is not None:
-                result = interpolate_mist_to_mass(mist_index, mist_feh, M, log_age_grid)
-                if result is not None:
-                    src = 2
+                # nearest MIST grid with a valid track pair (MIST v2.5 [Fe/H] = +0.5 ends its 0.1-0.45 Msun tracks
+                # before the main sequence)
+                for fk in sorted(MIST_Z_GRID, key=lambda k: abs(np.log10(MIST_Z_GRID[k]) - np.log10(Z))):
+                    result = interpolate_mist_to_mass(mist_index, fk, M, log_age_grid)
+                    if result is not None:
+                        src = 2
+                        break
 
             # 3) BoOST fallback for massive stars
             if result is None and boost_grid is not None and M >= 9.0:
@@ -3073,7 +3140,7 @@ def build_all(base_dir, output_file):
             if result is None:
                 pM = min(parsec_M, key=lambda m: abs(m - M))
                 fp = parsec_index.get((pZ, pM))
-                if fp is not None:
+                if fp is not None and os.path.getsize(fp) > 0:   # empty = file only listed in the reduced catalogue
                     track = parsec_track_to_common(fp)
                     result = resample_onto_age_grid(track, log_age_grid)
                     src = 0
@@ -3224,6 +3291,8 @@ def build_all(base_dir, output_file):
             dM = np.zeros(N_AGE)
             dM[1:] = np.where(alive, drop, 0.0)
             ia = np.where(M_t > 0)[0]
+            if M_grid[im] < WIND_DX_M_MIN:
+                dM[:] = 0.0   # no winds below 8 Msun (as in GIZMO): all mass leaves with the AGB event
             if np.isfinite(wind_w_p2[iz, im]) and ia.size > 1:
                 dM[ia[0]] += max(0.0, M_grid[im] - M_t[ia[0]])               # lost before ZAMS: with the first step
                 late = (M_grid[im] - dM.sum()) - M_final_track[iz, im]   # lost after the last alive grid age
@@ -3500,7 +3569,9 @@ def build_all(base_dir, output_file):
 
         # Global attributes
         f.attrs['description'] = 'Unified stellar evolution + yield tables for GIZMO'
-        f.attrs['evolution_sources'] = ('PARSEC v2 VMS (M >= 2, primary) + MIST v1.2 (M < 2 + fallback) '
+        f.attrs['mist_version'] = MIST['version']
+        f.attrs['mist_alpha_fe'] = MIST_AFE.get(MIST['afe'], 0.0) if MIST['version'] == 'v2.5' else 0.0
+        f.attrs['evolution_sources'] = (f"PARSEC v2 VMS (M >= 2, primary) + MIST {MIST['version']} (M < 2 + fallback) "
                                           '+ BoOST v1.3 (fallback) + PARSEC v1.2s (last resort)')
         f.attrs['Z_sun'] = np.float64(Z_SOLAR)   # read by GIZMO as its solar Z; keep name and type
         f.attrs['solar_abundance_source'] = 'Asplund+09 Table 1 photospheric log eps, metals C..Zn normalized to Z_sun (stellar/solar_abundances.py)'
@@ -3664,7 +3735,8 @@ def radiation_source_description():
         return 'Planck blackbody at Teff'
     if RADIATION['source'] == 'hotstar_stack':
         return ('model atmospheres per band: TLUSTY BSTAR2006/OSTAR2002 15-55 kK (blended with ATLAS9 over 15-20 kK and into a '
-                'blackbody over 55-65 kK), ATLAS9 below, '
+                'blackbody over 55-65 kK), below that the ATLAS9 (Castelli-Kurucz) / PHOENIX-ACES band LUT at each track point\'s '
+                'log g and Z where all interpolation corners are atmosphere models (blackbody elsewhere), '
                 'PoWR OB Vd3 log Q(HeII) for He+-ionizing photons of O/B stars, PoWR WR grids (transformed radius) and Gotberg+2018 '
                 'stripped stars (Z < 0.1 Zsun) for WR phases, CMFGEN wind models (Martins & Palacios 2017-2022, Martins+2025) '
                 'for Eddington-limit holes of TLUSTY and above its 55 kK edge (0.01-1 Zsun), blackbody only off every grid; '
@@ -3695,10 +3767,19 @@ if __name__ == '__main__':
     ap.add_argument('--atlas9-lookup', choices=ATLAS9_LOOKUP,
                     help='atlas9 only, required: legacy (log g = 4, Z_sun, extrapolate), clamp (point log g / Z, clamped '
                          'to the grid), masked_planck (point log g / Z, Planck where the LUT has no model)')
+    ap.add_argument('--mist', choices=MIST_VERSIONS, default='v2.5', help='MIST release for M < 2.5 Msun (default v2.5)')
+    ap.add_argument('--mist-alpha-fe', choices=sorted(MIST_AFE), default='p0',
+                    help='MIST v2.5 [a/Fe] grid: m2 p0 p2 p4 p6 = -0.2 ... +0.6 (default p0, solar-scaled)')
     a = ap.parse_args()
+    if a.mist == 'v1.2' and a.mist_alpha_fe != 'p0':
+        ap.error('MIST v1.2 is solar-scaled only')
     if (a.radiation_source == 'atlas9') != (a.atlas9_lookup is not None):
         ap.error('--atlas9-lookup is required with --radiation-source atlas9 and not allowed otherwise')
     RADIATION['source'], RADIATION['lookup'] = a.radiation_source, a.atlas9_lookup
+    MIST['version'], MIST['afe'] = a.mist, a.mist_alpha_fe
     output_file = a.output
     build_all(a.data_root, output_file)
     verify(output_file)
+    if os.environ.get('STELLA_TRACE_READS'):
+        with open(os.environ['STELLA_TRACE_READS'], 'w') as fo:
+            fo.writelines(os.path.relpath(f, os.path.abspath(a.data_root)) + '\n' for f in sorted(TRACK_READS))
