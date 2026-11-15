@@ -16,6 +16,7 @@ Output: single HDF5 with time-dependent evolution + end-of-life yields.
 """
 
 import numpy as np
+import math
 import os
 import re
 import sys
@@ -2070,7 +2071,7 @@ def load_kl2016_yields(kl_dir):
                 mass_expelled = mod['elems'].get((kl_name, kl_Z), 0.0)
                 # initial mass fraction of the model (metals from its own pattern, see above)
                 if our_el == 'H':
-                    X_init = 1.0 - mod['Y'] - sum(mod['x0'].values())
+                    X_init = 1.0 - mod['Y'] - math.fsum(mod['x0'].values())
                 elif our_el == 'He':
                     X_init = mod['Y']
                 else:
@@ -2198,7 +2199,7 @@ def load_parsec2_ejecta(ejecta_dir):
             sn_type_str = parts[6]
             yields = {}
             for elem, cols in ELEM_COLS_P2.items():
-                yields[elem] = sum(float(parts[c]) for c in cols)
+                yields[elem] = math.fsum(float(parts[c]) for c in cols)
             # NI is stable Ni (CCSN Ni/Fe ~ initial); FE already holds the decayed 56Ni, so no Ni -> Fe move
             # Per-isotope yields (1:1 with PARSEC2 columns)
             ISOTOPE_COLS_P2 = {
@@ -2265,7 +2266,7 @@ def load_parsec2_wind_ejecta(ejecta_dir):
             M_init = float(parts[0])
             yields = {}
             for elem, cols in ELEM_COLS_WIND.items():
-                yields[elem] = sum(float(parts[c]) for c in cols)
+                yields[elem] = math.fsum(float(parts[c]) for c in cols)
             # No Ni56→Fe decay in winds: wind Ni is stable Ni from the
             # stellar envelope, not explosive nucleosynthesis product.
             data[(Z, M_init)] = {
@@ -3569,15 +3570,19 @@ def build_all(base_dir, output_file):
 
         # Global attributes
         f.attrs['description'] = 'Unified stellar evolution + yield tables for GIZMO'
+        import platform, scipy, h5py as _h5
+        f.attrs['build_environment'] = ('python %s, numpy %s, scipy %s, h5py %s, NPY_DISABLE_CPU_FEATURES=%r' % (
+            platform.python_version(), np.__version__, scipy.__version__, _h5.__version__, os.environ.get('NPY_DISABLE_CPU_FEATURES', '')))
         f.attrs['mist_version'] = MIST['version']
         f.attrs['mist_alpha_fe'] = MIST_AFE.get(MIST['afe'], 0.0) if MIST['version'] == 'v2.5' else 0.0
         f.attrs['evolution_sources'] = (f"PARSEC v2 VMS (M >= 2, primary) + MIST {MIST['version']} (M < 2 + fallback) "
                                           '+ BoOST v1.3 (fallback) + PARSEC v1.2s (last resort)')
         f.attrs['Z_sun'] = np.float64(Z_SOLAR)   # read by GIZMO as its solar Z; keep name and type
         f.attrs['solar_abundance_source'] = 'Asplund+09 Table 1 photospheric log eps, metals C..Zn normalized to Z_sun (stellar/solar_abundances.py)'
-        f.attrs['yield_sources'] = ('Karakas AGB [K&L(2016) Z>=0.007 + K(2010) Z<0.007] '
-                                    '+ Limongi+(2025) 8-13Msun + NuGrid Z-scaling (8-13) '
-                                    '+ PARSEC v2 14+Msun + Iwamoto(1999) Type Ia')
+        f.attrs['yield_sources'] = ('Karakas AGB < 8 Msun [K(2010) Z < 0.007, K&L(2016) Z >= 0.007, linear in log Z between] '
+                                    '+ Limongi+(2025) 8-14 Msun with NuGrid net-yield Z dependence and missing elements '
+                                    '+ PARSEC v2 total and wind ejecta >= 14 Msun (BoOST wind enrichment 8-14 Msun) '
+                                    '+ Iwamoto(1999) Type Ia')
         f.attrs['remnant_source'] = 'PARSEC v2 VMS (CCSN/FSN/PPISN/PISN/DBH) for M>=14'
         f.attrs['tracked_elements'] = TRACKED_ELEMENTS
         f.attrs['N_Z'] = N_Z
