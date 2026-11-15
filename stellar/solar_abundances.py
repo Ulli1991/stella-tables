@@ -9,6 +9,7 @@ Normalization (Stella convention): metals C..Zn sum to Z_SUN = 0.014, Y = A09 ph
   solar_abundances.py --c        print the C array for GIZMO core/init.cc
 """
 import sys
+import math
 
 ELEMENTS = ['H', 'He', 'C', 'N', 'O', 'F', 'Ne', 'Na', 'Mg', 'Al', 'Si', 'P', 'S', 'Cl', 'Ar', 'K',
             'Ca', 'Sc', 'Ti', 'V', 'Cr', 'Mn', 'Fe', 'Co', 'Ni', 'Cu', 'Zn']
@@ -33,14 +34,14 @@ Y_SUN = 0.2485         # A09 helioseismic surface Y_s (Sect. 3.9); log eps(He) =
 def a09_mass_fractions():
     """A09 present-day photospheric mass fractions over H..Zn (elements beyond Zn add < 1e-7)"""
     m = {e: 10 ** (LOGEPS_A09[e] - 12) * ATOMIC_WEIGHT[e] for e in LOGEPS_A09}
-    tot = sum(m.values())
+    tot = math.fsum(m.values())   # correctly rounded: same in every Python version
     return {e: v / tot for e, v in m.items()}
 
 
 def solar_pattern():
     """27-element solar mass fractions in ELEMENTS order: A09 metal ratios, metals sum to Z_SUN"""
     x = a09_mass_fractions()
-    metals = ELEMENTS[2:]; zsum = sum(x[e] for e in metals)
+    metals = ELEMENTS[2:]; zsum = math.fsum(x[e] for e in metals)
     pat = {e: x[e] / zsum * Z_SUN for e in metals}
     pat['He'] = Y_SUN; pat['H'] = 1.0 - Y_SUN - Z_SUN
     return pat

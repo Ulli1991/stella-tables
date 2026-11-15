@@ -133,6 +133,34 @@ def limongi_lifetime_budget_solar(t, w, root):
     return worst[0] < 1, 'Limongi elements except H at 11, 12 Msun: worst |dnet|/tol = %.2g at (M, elem, table, raw) = %s' % worst
 
 
+@test
+def remnant_type_is_raw_parsec2_fate(t, w, root):
+    """remnant type at PARSEC v2 grid points (Z, M >= 14) = the raw total-ejecta SNT column (e.g. Z = 0.03: failed SNe
+    only at 26-30 Msun, core collapse from 35 Msun; Z = 0.04, 0.06 take the Z = 0.03 fates)"""
+    code = {'CCSN': 2, 'FSN': 3, 'PPISN': 4, 'PISN': 5, 'DBH': 6, 'NOT': 0}
+    Zt, Mt, rt = t['Z'][()], t['M_init'][()], t['remnant_type'][()]
+    bad, n = [], 0
+    for f in glob(os.path.join(root, 'parsec2_vms', 'ejecta_Z*', '*total_ejecta.dat')):
+        Zp = float(re.search(r'ejecta_Z([\d.Ee-]+)', f).group(1))
+        izs = [i for i, z in enumerate(Zt) if np.isclose(z, Zp) or (Zp == 0.03 and z > 0.03)]
+        rows = {}
+        for ln in open(f).read().splitlines()[4:]:
+            p = ln.split()
+            if len(p) > 7: rows.setdefault(float(p[0]), p[6])
+        for iz in izs:
+            for im, M in enumerate(Mt):
+                if M >= 14 and M in rows:
+                    n += 1
+                    if rt[iz, im] != code[rows[M]]: bad.append((Zt[iz], M, int(rt[iz, im]), rows[M]))
+    return n > 0 and not bad, '%d grid points; mismatches (Z, M, table, raw): %s' % (n, bad[:6])
+
+
+@test
+def yield_source_mass_ranges_stated(t, w, root):
+    src = str(t.attrs.get('yield_sources', ''))
+    return 'Limongi+(2025) 8-14 Msun' in src and '8-13' not in src, 'yield_sources = %r' % src
+
+
 def main():
     b = sys.argv[1]; root = os.path.join(b, 'data_root')
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'stellar'))

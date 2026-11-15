@@ -5,7 +5,9 @@
 
 eh2-table.txt and H2-cooling-ratios.dat are inherited tables of unknown provenance; wss_z_collis.txt is the
 Wiersma, Schaye & Smith (2009) CIE table (official release). All three are checksum-locked here so any change is
-deliberate, and sanity-checked. energy-table-x.txt is regenerated from eh2.
+deliberate, and sanity-checked. energy-table-x.txt is the canonical generator output (chemistry/reference/, made in
+the recorded environment); each build regenerates it from eh2 and compares (exact in that environment, 1e-12 in others:
+scipy/LAPACK versions change the last printed digit of a few rows).
 """
 import os, sys, hashlib, importlib.util
 import numpy as np
@@ -82,12 +84,27 @@ def original_table_preserved(d):
     return h == ORIG_SHA, 'stored original GIZMO energy table sha256 %s' % ('intact' if h == ORIG_SHA else 'CHANGED ' + h)
 
 
+def _close(a, b):
+    """byte-identical, and max relative difference of T and gamma"""
+    x, y = np.loadtxt(a), np.loadtxt(b)
+    return sha(a) == sha(b), float(np.max(np.abs(x[:, 1:] / y[:, 1:] - 1))) if x.shape == y.shape else np.inf
+
+
 @test()
 def legacy_seam_reproduces_original(d):
-    tmp = os.path.join(d, '.regen_legacy.txt')
+    import lzma
+    tmp, org = os.path.join(d, '.regen_legacy.txt'), os.path.join(d, '.orig.txt')
     np.savetxt(tmp, m.make(m.load_eh2(os.path.join(d, 'eh2-table.txt'), legacy_seam=True), np.linspace(0, 1, NBLK)), fmt=['%d', '%.14g', '%.14g'], delimiter='  ')
-    ok = sha(tmp) == ORIG_SHA; os.remove(tmp)
-    return ok, '--legacy-seam output byte-identical to the original GIZMO table'
+    open(org, 'wb').write(lzma.open(ORIG).read())
+    same, dev = _close(tmp, org); os.remove(tmp); os.remove(org)
+    return dev < 1e-12, '--legacy-seam output vs the original GIZMO table: max rel %.1e, byte-identical %s' % (dev, same)
+
+
+@test()
+def generator_reproduces_canonical_table(d):
+    """the generator output of this build equals the installed canonical energy-table-x.txt (to 1e-12)"""
+    same, dev = _close(os.path.join(d, 'energy-table-x.regenerated.txt'), os.path.join(d, 'energy-table-x.txt'))
+    return dev < 1e-12, 'regenerated vs canonical: max rel %.1e, byte-identical %s' % (dev, same)
 
 
 @test()
@@ -113,15 +130,6 @@ def eh2_known_glitch_present_and_dropped(d):
     e = np.loadtxt(os.path.join(d, 'eh2-table.txt')); r = e[e[:, 0] == 20000, 1][0]
     nb = 0.5 * (e[e[:, 0] == 19999, 1][0] + e[e[:, 0] == 20001, 1][0])
     return abs(r - 30000) < 1e-6 and abs(nb / r - 1) > 0.5, 'row T=20000 has %.0f vs neighbours %.0f' % (r, nb)
-
-
-@test()
-def energy_table_regenerates(d):
-    tmp = os.path.join(d, '.regen_energy-table-x.txt')
-    e = m.load_eh2(os.path.join(d, 'eh2-table.txt'))
-    np.savetxt(tmp, m.make(e, np.linspace(0, 1, NBLK)), fmt=['%d', '%.14g', '%.14g'], delimiter='  ')
-    ok = sha(tmp) == sha(os.path.join(d, 'energy-table-x.txt')); os.remove(tmp)
-    return ok, 'generator output byte-identical to the built energy-table-x.txt'
 
 
 def etab(d):

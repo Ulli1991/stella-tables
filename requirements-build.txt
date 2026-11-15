@@ -1,0 +1,7 @@
+# Exact environment the published tables are built in; build.sh refuses others (STELLA_ALLOW_ANY_ENV=1 overrides, and
+# the tables then differ from the published ones in the last bits: numpy's exp/log/pow, sums and scipy/LAPACK change
+# with the version). MPCDF: module load python-waterboa/2026.07
+python==3.14.6
+numpy==2.4.6
+scipy==1.18.0
+h5py==3.16.0

@@ -9,6 +9,11 @@
 # Outputs land in build/: stellar_tables_unified.hdf5, stellar_wind_cumulative.hdf5, chemistry/energy-table-x.txt
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# bit-reproducible tables: pinned environment (requirements-build.txt), one thread, numpy's baseline CPU code paths
+python3 "$HERE/check_build_env.py" || { [ "${STELLA_ALLOW_ANY_ENV:-0}" = 1 ] && echo "   STELLA_ALLOW_ANY_ENV=1: building anyway; tables will differ from the published ones in the last bits"; } || {
+    echo "build.sh: Python environment differs from requirements-build.txt (MPCDF: module load python-waterboa/2026.07)"; exit 1; }
+export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+python3 -c 'import numpy, sys; sys.exit(int(numpy.__version__.split(".")[0]) < 2)' && export NPY_DISABLE_CPU_FEATURES="${NPY_DISABLE_CPU_FEATURES-X86_V3 X86_V4 AVX512_ICL AVX512_SPR}"
 OUT="$HERE/build"; ROOT="$OUT/data_root"
 mkdir -p "$OUT/chemistry" "$ROOT"
 
@@ -28,8 +33,11 @@ python3 "$HERE/stellar/build_stellar_tables.py" "$ROOT" "$OUT/stellar_tables_uni
 # (the builder writes stellar_wind_cumulative.hdf5 next to the main output)
 
 echo "== chemistry tables"
+# energy table: the canonical file (generator output in the recorded environment) is installed; the generator runs
+# every build and the tests compare its output with the canonical table (to 1e-12, exact in the recorded environment)
 python3 "$HERE/chemistry/make_energy_table.py" --eh2 "$HERE/chemistry/tables/eh2-table.txt" --mode x --dx 0.05 \
-        --out "$OUT/chemistry/energy-table-x.txt" > "$OUT/build_chemistry.log" 2>&1
+        --out "$OUT/chemistry/energy-table-x.regenerated.txt" > "$OUT/build_chemistry.log" 2>&1
+xz -dc "$HERE/chemistry/reference/energy-table-x.txt.xz" > "$OUT/chemistry/energy-table-x.txt"
 for f in eh2-table.txt H2-cooling-ratios.dat wss_z_collis.txt; do cp "$HERE/chemistry/tables/$f" "$OUT/chemistry/"; done
 
 echo "== SGChem data tables"

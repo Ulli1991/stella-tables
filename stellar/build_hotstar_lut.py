@@ -16,6 +16,7 @@ missing models: nearest log g at the same Teff; PoWR: nearest valid node).
 """
 import os, re, sys, glob
 import numpy as np
+trapz = getattr(np, 'trapezoid', None) or np.trapz   # numpy >= 2 renamed it
 import h5py
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -216,7 +217,7 @@ def gotberg(root):
         for f in glob.glob(os.path.join(root, 'gotberg18', gdir, '*', 'SED.txt')):
             Mi = float(re.search(r'M1_([0-9.]+)q', f).group(1)); row = t[np.argmin(abs(t[:, 0] - Mi))]
             a = np.loadtxt(f, comments='#'); ef, qf = bands(a[:, 0], a[:, 1])
-            L = 4 * np.pi * (3.0857e21) ** 2 * np.trapz(a[:, 1], a[:, 0])
+            L = 4 * np.pi * (3.0857e21) ** 2 * trapz(a[:, 1], a[:, 0])
             rec.append((row[7], row[8], row[10], Mi, ef, qf, np.log10(L / L_sun) - row[4], np.log10(qf[QB.index('Q_ion')] * L) - row[15]))
             if abs(rec[-1][6]) > 0.1: print('  Gotberg Z=%s M_init=%g: SED log L %.2f vs table %.2f (Teff from the table, fractions per L)' % (z, Mi, np.log10(L / L_sun), row[4]))
         rec.sort(key=lambda r: r[0])
@@ -288,7 +289,7 @@ def cmfgen(root):
                 src = 'Martins & Palacios 2022' if coll == 'VMS-ZLMC-SED' else ('Martins & Palacios 2017' if pre == 'MW_' else 'Martins & Palacios 2021')
             if X < CMF_X_MIN: continue
             a = np.loadtxt(f); ef, qf = bands(a[:, 0], a[:, 1])
-            tsed = (np.trapz(a[:, 1], a[:, 0]) / 5.670374e-5) ** 0.25      # flux is given below the photosphere: T_sed >= Teff
+            tsed = (trapz(a[:, 1], a[:, 0]) / 5.670374e-5) ** 0.25      # flux is given below the photosphere: T_sed >= Teff
             if not 0.97 < tsed / T < 1.6: raise ValueError('%s: SED temperature %.0f K vs Teff %.0f K' % (fn, tsed, T))
             o = out.setdefault('%.4f' % zrel, dict(Z_rel=zrel, rec=[]))
             o['rec'].append((np.log10(T), lg, X, lMd, ef, qf, os.path.basename(f), src))

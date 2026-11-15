@@ -1,5 +1,23 @@
 # Changelog
 
+## Reproducible build (after tables-aa87301)
+
+- `build.sh` checks the Python environment against `requirements-build.txt` (python-waterboa 2026.07: Python 3.14.6,
+  numpy 2.4.6, scipy 1.18.0, h5py 3.16.0), runs single-threaded and on numpy's baseline CPU code paths: the same
+  tables on every machine with that environment (login node and compute node orion002 built identical files).
+- Python float sums are correctly rounded (`math.fsum`); the energy table is installed from its canonical file, so it
+  is the same in every environment (sha256 e1b03445..., as pinned in GIZMO).
+- Content hashes in the pinned environment: `stellar_tables_unified.hdf5` b94a4edc596ba04af2143a5982b0777b9297adc43e12cd4c39d2709aea2a5c62,
+  `stellar_wind_cumulative.hdf5` 89f40e36aa5abe3ed3846973204dba5fec0b2598f5af2d9b0a9fbd9495d49285 (unchanged).
+  The stellar table differs from tables-aa87301 (built with Python 3.6, numpy 1.19) only in the last bits.
+- Physics unchanged against tables-aa87301; the stellar table differs only in the last bits (per dataset, max
+  |a-b|/max(|a|,|b|)): 29 of 52 datasets identical; `elem_ej_AGB_mass` 9.1e-14, `elem_ej_SN_mass` 6.2e-14, band
+  luminosities and photon rates (`log_L_*`, `log_Q_*`) <= 1.9e-14, `X_init` 4.4e-16; `surface_abundances` differs
+  in 235 of 3.4e7 entries, all O and F at ~1e-18 (round-off residue of fully depleted elements, absolute <= 4.3e-19,
+  relative 3.7e-4). `stellar_wind_cumulative.hdf5` and all chemistry files are identical.
+- `yield_sources` attribute: Limongi+2025 8-14 Msun (was "8-13"), as the builder uses it.
+- Tests run with numpy 2 (`np.trapz` removed there).
+
 ## fix/wind-composition (not yet pinned in GIZMO)
 
 Compared with the tables GIZMO pins (stella-tables a4830ab; unified 14a23087…, wind 5ad36096…). Built with
