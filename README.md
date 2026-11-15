@@ -100,6 +100,43 @@ attributes (`radiation_source*`, `atlas9_lookup_option`, `spectral_lut_sha256`).
   `radiation_coverage_*` attributes give the share of track points (and of their blackbody Q_H0, L_FUV, L_LW)
   that hit only models, a filled cell, or nothing. Default `atlas9` / `legacy`.
 
+## Wind composition
+
+`stellar_wind_cumulative.hdf5` (`elem_ej_wind_cumulative`) is what GIZMO injects as winds (from 8 Msun up). The
+wind mass per age step is the track's mass loss, down to the track's final mass (mass lost after the last alive
+age-grid point goes into the last interval). For M >= 8 the composition is the birth composition `X_init` plus the
+wind enrichment of the source star per unit wind mass, `ejecta_k / M_wind - X_source,init_k`, for all 27 elements:
+PARSEC v2 wind ejecta (`winds_ejecta.dat`, 14-600 Msun, nearest PARSEC v2 Z, linear in M) for M >= 14; below, BoOST
+(non-rotating tracks, surface H..Fe x mass loss over the whole track; the 15 elements BoOST lacks, P, S, Cl, Ar, K,
+Ca, Sc, Ti, V, Cr, Mn, Co, Ni, Cu, Zn, stay at birth fraction), interpolated in log Z between its grids and blended
+linearly in log M into PARSEC v2 over 12-14 Msun; above the BoOST metallicities (from 2 x its MW grid) PARSEC v2 at
+14 Msun. The timing follows the track: x_k(t) = X_init,k + net_k f(t) / sum f dM, f = the track's surface He
+excess scaled to peak 1 (0 at ZAMS), raised where needed so that no element goes negative; the sum over elements is 1
+at every step and the end-of-wind totals are X_init W + net exactly. An element is at most fully absent from the
+wind (net >= -X_init W, rest to H). Below 8 Msun (not injected by GIZMO) the wind and `surface_abundances` are
+X_init plus the track's own surface change since ZAMS; for M >= 8 `surface_abundances` holds the wind fractions.
+
+## Yields
+
+Lifetime element budget per star: wind + SN (or AGB) ejecta = X_init (M - rem) + the source's net yield; the SN
+gets X_init Mej + (lifetime net - wind net). Net yields are taken against each source's own initial composition.
+Per-element closure is done on absolute ejecta: a source's sum of net yields that is not 0 (Li/Be, rounding,
+transcription) goes to H, negative elements are clipped (logged; the build stops if H runs out).
+
+- PARSEC v2 (>= 14 Msun): total and wind ejecta files. An isotope column that is exactly 0 while the isotope is
+  present initially is not filled by PARSEC v2 (P in every row; Si29, P, Cl, K, Sc, V, Mn, Co, Cu in all wind, FSN,
+  PPISN and DBH rows) and is set to initial fraction x ejected mass (net 0). NI is stable Ni (FE already holds the
+  decayed 56Ni). Where the two bracketing masses have different explosion types, the nearer model is used whole.
+- Limongi+2025 (8-14 Msun, solar Z, lifetime totals), Z dependence added as NuGrid net yield per ejected mass at
+  Z x 0.02/0.014 minus that at 0.02 (log-Z interpolated between NuGrid grids, linear in M over 12-25 Msun);
+  elements Limongi lacks from the NuGrid net yield.
+- AGB (< 8 Msun): Karakas 2010 below Z = 0.007, Karakas & Lugaro 2016 from 0.007, linear in log Z between their
+  metallicities. K2010 Z = 1e-4, 6 Msun: the VW93 model (the Reimers variant is skipped). KL16 initial composition
+  from the files' [X/H] (X(i) 10^-[X/H]), scaled so Ca, which AGB stars do not process, has net 0. GIZMO runs no
+  winds below 8 Msun, so the AGB composition is built on M_init - rem and scaled to M_preSN - rem.
+- 26Al (half-life 0.72 Myr) is counted as Mg in every source that lists it as an isotope (all but KL16, which gives Al
+  as an element).
+
 ## Solar composition
 
 `stellar/solar_abundances.py` is the single source for the tables and for GIZMO (`core/init.cc`,
@@ -133,6 +170,8 @@ recorded origin. Both are checksum-locked and sanity-checked, not regenerated.
 | `tests/stellar/test_invariants.py` | mass and wind closure under interpolation, monotonic cumulative winds, no NaN at the grid edges |
 | `tests/stellar/test_table_physics.py` | every dataset GIZMO's loader opens, physics sanity, provenance; `--compare A B` diffs two tables |
 | `tests/stellar/test_extended.py` | lifetime and L_bol continuity where the track source changes, solar constants, scaled-solar mixture, spectral LUT fractions, band luminosities below L_bol, ZAMS Q_ion rising with mass, table/wind grid agreement, per-dataset fingerprints against the reference build |
+| `tests/stellar/test_wind_composition.py` | BoOST isotope columns vs `fdat-columns.txt`; end-of-wind element masses = PARSEC v2 wind ejecta enrichment for all 27 elements; Na/Al wind enrichment of massive stars; per-star wind + SN element budget = PARSEC v2 lifetime net yield (raw inputs from `BUILD_DIR/data_root`) |
+| `tests/stellar/test_yields_raw.py` | pre-SN mass = raw PARSEC v2 track final mass; ZAMS surface = X_init; K2010 Z = 1e-4 6 Msun = VW93 model; KL16 unprocessed elements follow the raw production factors; Limongi+2025 lifetime budget at solar Z (raw inputs from `BUILD_DIR/data_root`) |
 | `tests/stellar/test_solar.py` | A09 transcription reproduces A09's Z and Z/X, pattern sums, table X_init = pattern x Z/0.014, GIZMO `init.cc` array equals the generator (`--gizmo`) |
 | `tests/chemistry/test_chemistry.py` | checksums, eh2 physics (1.5T at low T, c_v bounds, glitch row, seam), energy table regenerates byte for byte, layout, x = 0 block exact, gamma bounds, monotonicity, new vs original table |
 | `tests/chemistry/run_lookup_test.py` | built and original energy tables through GIZMO's Fortran `calc_temp.F` and the C++ port: T round trip to 2e-3 for abhe 0 / 0.079 / 0.1 / 0.12, backends agree, original and new identical off the seam |

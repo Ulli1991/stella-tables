@@ -166,7 +166,7 @@ BOOST_GRIDS = {
     'dwarfE': 0.0000431,
 }
 
-# BoOST surface isotope columns (0-indexed) → element mapping
+# BoOST surface isotope columns (0-indexed; fdat-columns.txt is 1-indexed) → element mapping
 BOOST_SURFACE_ELEM = {
     'H':  [26, 27],         # sH1 + sH2
     'He': [28, 29],         # sHe3 + sHe4
@@ -175,9 +175,9 @@ BOOST_SURFACE_ELEM = {
     'O':  [43, 44, 45],     # sO16 + sO17 + sO18
     'F':  [46],             # sF19
     'Ne': [47, 48, 49],     # sNe20 + sNe21 + sNe22
-    'Na': [],               # not in BoOST → solar-scaled
-    'Mg': [50, 51, 52, 53], # sMg22 + sMg24 + sMg25 + sMg26
-    'Al': [54, 55],         # sAl26 + sAl27
+    'Na': [50],             # sNa23
+    'Mg': [51, 52, 53, 54], # sMg24 + sMg25 + sMg26 + sAl26 (decays to 26Mg)
+    'Al': [55],             # sAl27
     'Si': [56, 57, 58],     # sSi28 + sSi29 + sSi30
     'S':  [],               # not in BoOST → solar-scaled
     'Ca': [],               # not in BoOST → solar-scaled
@@ -661,6 +661,7 @@ def trim_to_ZAMS(result):
       - phase_transitions shifted by t_PMS
       - Lifetime becomes ZAMS-to-death
     """
+    result['M_birth'] = float(result['M_current'][0])   # before trimming: pre-ZAMS mass loss stays in the mass scale
     phase = result.get('phase')
     if phase is None:
         result['t_PMS'] = 0.0
@@ -828,7 +829,7 @@ def boost_track_to_common(filepath):
     He_init = data[0, 28] + data[0, 29]  # sHe3 + sHe4
     Z_star = 1.0 - H_init - He_init
     for ie, elem in enumerate(TRACKED_ELEMENTS):
-        cols = BOOST_SURFACE_ELEM[elem]
+        cols = BOOST_SURFACE_ELEM.get(elem, [])
         if cols:
             for c in cols:
                 surface[:, ie] += data[:, c]
@@ -1276,6 +1277,40 @@ def find_boost_grid_for_Z(Z):
     return None
 
 
+def load_boost_wind_dx(boost_dir):
+    """Wind enrichment per unit wind mass of the non-rotating BoOST tracks: Σ X_surf dM / Σ dM - X_surf(0) per element
+    (elements without a BoOST surface column: 0, i.e. birth composition). Returns {grid: (masses, dx[nM, N_ELEM])}."""
+    out = {}
+    for grid in BOOST_GRIDS:
+        Ms, dxs = [], []
+        for f in sorted(glob(os.path.join(boost_dir, 'BoOST-stellarmodels-' + grid, 'f*-100.*.dat'))):
+            if os.path.getsize(f) == 0:
+                continue
+            d = np.loadtxt(f)
+            s = np.zeros((len(d), N_ELEM))
+            for ie, e in enumerate(TRACKED_ELEMENTS):
+                for c in BOOST_SURFACE_ELEM.get(e, []):
+                    s[:, ie] += d[:, c]
+            dM = np.maximum(0.0, d[:-1, 1] - d[1:, 1])
+            if dM.sum() <= 0:
+                continue
+            dx = (0.5 * (s[:-1] + s[1:]) * dM[:, None]).sum(axis=0) / dM.sum() - s[0]
+            dx[TRACKED_ELEMENTS.index('H')] -= dx.sum()   # the elements BoOST lacks stay at birth fraction
+            Ms.append(float(re.match(r'f(\d+)-', os.path.basename(f)).group(1))); dxs.append(dx)
+        if Ms:
+            o = np.argsort(Ms); out[grid] = (np.array(Ms)[o], np.array(dxs)[o])
+    return out
+
+
+def _interp_rows_logx(x, xs, rows):
+    """rows[i] at xs[i], linear in log x, clamped at the ends"""
+    lx, lxs = np.log10(x), np.log10(xs)
+    if lx <= lxs[0]: return rows[0].copy()
+    if lx >= lxs[-1]: return rows[-1].copy()
+    j = int(np.searchsorted(lxs, lx)) - 1; f = (lx - lxs[j]) / (lxs[j + 1] - lxs[j])
+    return (1 - f) * rows[j] + f * rows[j + 1]
+
+
 def _resample_track_onto_tau_grid(track, tau_grid):
     """
     Resample a raw track dict onto a fractional-lifetime grid tau in [0, 1].
@@ -1316,9 +1351,10 @@ def _resample_track_onto_tau_grid(track, tau_grid):
     # M_current as fractional mass (M/M_init) — interpolating fractions avoids
     # overshoot when the log-mass interpolation weight f != linear-mass weight
     M_cur_vals = track['M_current'][mask]
-    M_init_track = M_cur_vals[0] if M_cur_vals[0] > 0 else 1.0
+    M_init_track = track.get('M_birth', M_cur_vals[0]) if M_cur_vals[0] > 0 else 1.0
     M_frac = M_cur_vals / M_init_track
     result['M_frac'] = np.interp(tau_grid, tau_track, M_frac, left=1.0, right=M_frac[-1])
+    result['M_frac'][-1] = M_frac[-1]   # death = the track's final mass (points past tau = 1 would drop their mass loss)
 
     # Surface abundances
     surf = track['surface'][mask]
@@ -1768,7 +1804,8 @@ ISOTOPE_TO_ELEMENT_KAR = {
     'ne19': 'Ne', 'ne20': 'Ne', 'ne21': 'Ne', 'ne22': 'Ne', 'ne23': 'Ne',
     'na21': 'Na', 'na22': 'Na', 'na23': 'Na', 'na24': 'Na',
     'mg23': 'Mg', 'mg24': 'Mg', 'mg25': 'Mg', 'mg26': 'Mg', 'mg27': 'Mg',
-    'al*6': 'Al', 'al-6': 'Al', 'al25': 'Al', 'al26': 'Al', 'al27': 'Al', 'al28': 'Al',
+    'al*6': 'Mg', 'al-6': 'Mg', 'al26': 'Mg',   # 26Al (t1/2 0.72 Myr; isomer 6 s) -> 26Mg
+    'al25': 'Al', 'al27': 'Al', 'al28': 'Al',
     'si27': 'Si', 'si28': 'Si', 'si29': 'Si', 'si30': 'Si', 'si31': 'Si', 'si32': 'Si', 'si33': 'Si',
     'p29': 'P', 'p30': 'P', 'p31': 'P', 'p32': 'P', 'p33': 'P', 'p34': 'P',
     's32': 'S', 's33': 'S', 's34': 'S', 's35': 'S',
@@ -1836,6 +1873,8 @@ def load_karakas_yields(kar_dir):
                 M0 = float(line[0:4])
                 Z0 = float(line[5:11])
                 M_final = float(line[12:17])
+                if (M0, Z0, M_final) == (6.0, 0.0001, 1.008):
+                    continue   # Reimers mass-loss variant of the VW93 model (ReadMe note 1); VW93 as for every other model
                 iso = line[21:25].strip().lower()
                 net_yield = float(line[34:48])
                 wd_masses[(Z0, M0)] = M_final
@@ -1913,18 +1952,24 @@ def load_kl2016_yields(kl_dir):
                 M_final = float(m2.group(1))
                 M_expelled = float(m2.group(2))
                 i += 2  # skip column header line
-                elems = {}
+                elems, x0pat = {}, {}
                 while i < len(lines) and not lines[i].startswith('#'):
                     parts = lines[i].split()
                     if len(parts) >= 7:
                         # Key by (element_name, atomic_number) to distinguish
                         # p/1 (hydrogen) from p/15 (phosphorus)
-                        elems[(parts[0].lower(), int(parts[1]))] = float(parts[6])
+                        k = (parts[0].lower(), int(parts[1]))
+                        elems[k] = float(parts[6])
+                        if k[1] > 2:   # initial metal pattern: X(i) 10^-[X/H] (ejecta abundance back to the start)
+                            x0pat[k] = float(parts[5]) * 10**(-float(parts[3]))
                     i += 1
+                # Ca is not processed in AGB stars: it fixes the pattern's scale, i.e. Ca net yield 0
+                ca = elems[('ca', 20)] / (M_expelled * x0pat[('ca', 20)])
+                x0 = {k: v * ca for k, v in x0pat.items()}
                 models.append({
                     'M_init': M_init, 'Z': Z, 'Y': Y, 'M_mix': M_mix,
                     'M_final': M_final, 'M_expelled': M_expelled,
-                    'elems': elems,
+                    'elems': elems, 'x0': x0,
                 })
             else:
                 i += 1
@@ -1941,7 +1986,6 @@ def load_kl2016_yields(kl_dir):
 
         # Convert to net yields
         for (Z, M), mod in selected.items():
-            X_H = 1.0 - mod['Y'] - Z
             M_exp = mod['M_expelled']
             wd_masses[(Z, M)] = mod['M_final']
 
@@ -1949,13 +1993,13 @@ def load_kl2016_yields(kl_dir):
                 if our_el not in TRACKED_ELEMENTS:
                     continue
                 mass_expelled = mod['elems'].get((kl_name, kl_Z), 0.0)
-                # Initial mass fraction (solar-scaled)
+                # initial mass fraction of the model (metals from its own pattern, see above)
                 if our_el == 'H':
-                    X_init = X_H
+                    X_init = 1.0 - mod['Y'] - sum(mod['x0'].values())
                 elif our_el == 'He':
                     X_init = mod['Y']
                 else:
-                    X_init = SOLAR_METAL_FRAC.get(our_el, 0.0) * Z
+                    X_init = mod['x0'].get((kl_name, kl_Z), 0.0)
                 net = mass_expelled - X_init * M_exp
                 key = (Z, M, our_el)
                 elem_yields[key] = elem_yields.get(key, 0.0) + net
@@ -1974,8 +2018,8 @@ def _parse_parsec2_init_comp(ejecta_dir):
     # Must match ELEM_COLS_P2 in load_parsec2_ejecta — all 27 tracked elements
     INIT_COLS = {
         'H': [7], 'He': [8, 9], 'C': [12, 13], 'N': [14, 15], 'O': [16, 17, 18],
-        'F': [19], 'Ne': [20, 21, 22], 'Na': [23], 'Mg': [24, 25, 26],
-        'Al': [27, 28], 'Si': [29, 30], 'P': [31], 'S': [32], 'Cl': [33],
+        'F': [19], 'Ne': [20, 21, 22], 'Na': [23], 'Mg': [24, 25, 26, 27],   # 26Al -> 26Mg
+        'Al': [28], 'Si': [29, 30], 'P': [31], 'S': [32], 'Cl': [33],
         'Ar': [34], 'K': [35], 'Ca': [36], 'Sc': [37], 'Ti': [38], 'V': [39],
         'Cr': [40], 'Mn': [41], 'Fe': [42], 'Co': [43], 'Ni': [44],
         'Cu': [45], 'Zn': [46],
@@ -2013,6 +2057,27 @@ def _parse_parsec2_init_comp(ejecta_dir):
     return result
 
 
+def _parsec2_rows(path, first_col, mej_of, fill=True):
+    """data rows of a PARSEC v2 ejecta file as float lists (SN type string kept); an isotope column that is exactly 0
+    while the isotope is present initially is not filled by PARSEC v2 (P in every row; Si29, P, Cl, K, Sc, V, Mn, Co,
+    Cu in all wind, FSN, PPISN and DBH rows): set to its initial mass fraction x ejected mass, i.e. net 0"""
+    lines = open(path).read().splitlines()
+    tok = lines[1].replace('#', '').split()
+    x0 = [float(v) for v in (tok[tok.index('SN') + 1:] if 'SN' in tok else tok[first_col:])]
+    rows, filled = [], []
+    for line in lines[4:]:
+        parts = line.split()
+        if len(parts) < first_col + len(x0):
+            continue
+        vals = [p if i == 6 and first_col == 7 else float(p) for i, p in enumerate(parts)]
+        unf = [j for j, x in enumerate(x0) if vals[first_col + j] == 0.0 and x > 0]
+        if fill:
+            for j in unf:
+                vals[first_col + j] = x0[j] * mej_of(vals)
+        rows.append(vals); filled.append(set(unf))
+    return rows, x0, filled
+
+
 def load_parsec2_ejecta(ejecta_dir):
     """
     Load PARSEC v2 VMS ejecta tables (14-600+ Msun).
@@ -2021,8 +2086,8 @@ def load_parsec2_ejecta(ejecta_dir):
     # Column indices (0-based) after splitting data line
     ELEM_COLS_P2 = {
         'H': [7], 'He': [8, 9], 'C': [12, 13], 'N': [14, 15], 'O': [16, 17, 18],
-        'F': [19], 'Ne': [20, 21, 22], 'Na': [23], 'Mg': [24, 25, 26],
-        'Al': [27, 28], 'Si': [29, 30], 'P': [31], 'S': [32], 'Cl': [33],
+        'F': [19], 'Ne': [20, 21, 22], 'Na': [23], 'Mg': [24, 25, 26, 27],   # 26Al -> 26Mg
+        'Al': [28], 'Si': [29, 30], 'P': [31], 'S': [32], 'Cl': [33],
         'Ar': [34], 'K': [35], 'Ca': [36], 'Sc': [37], 'Ti': [38], 'V': [39],
         'Cr': [40], 'Mn': [41], 'Fe': [42], 'Co': [43], 'Ni': [44],
         'Cu': [45], 'Zn': [46],
@@ -2040,10 +2105,18 @@ def load_parsec2_ejecta(ejecta_dir):
         total_files = glob(os.path.join(zdir, '*total_ejecta.dat'))
         if not total_files:
             continue
-        with open(total_files[0]) as f:
-            lines = f.readlines()
-        for line in lines[4:]:  # skip 4 header lines
-            parts = line.split()
+        rows, x0, tfill = _parsec2_rows(total_files[0], 7, lambda v: v[0] - v[5])   # ejecta = M_init - M_bar
+        # where the wind file leaves an isotope unfilled, a nonzero total holds the explosion part only: add the
+        # wind part at initial composition (CCSN K, Cl, Mn, Co, Si29 ... otherwise look destroyed)
+        wf = glob(os.path.join(zdir, '*winds_ejecta.dat'))
+        wrows, _, wfill = _parsec2_rows(wf[0], 4, None, fill=False) if wf else ([], None, [])
+        wun = {r[0]: (r, u) for r, u in zip(wrows, wfill)}
+        for parts, tf in zip(rows, tfill):
+            if parts[0] in wun:
+                w, wu = wun[parts[0]]
+                for j in wu - tf:
+                    parts[7 + j] += x0[j] * (parts[0] - w[1])
+        for parts in rows:
             if len(parts) < 47:
                 continue
             M_init = float(parts[0])
@@ -2051,11 +2124,7 @@ def load_parsec2_ejecta(ejecta_dir):
             yields = {}
             for elem, cols in ELEM_COLS_P2.items():
                 yields[elem] = sum(float(parts[c]) for c in cols)
-            # Ni56 → Fe (radioactive decay): in SN ejecta nearly all Ni is
-            # Ni56 which decays to Fe56 (t½ = 6 d).  Move Ni into Fe and zero
-            # the Ni slot to avoid double-counting.
-            yields['Fe'] += yields['Ni']
-            yields['Ni'] = 0.0
+            # NI is stable Ni (CCSN Ni/Fe ~ initial); FE already holds the decayed 56Ni, so no Ni -> Fe move
             # Per-isotope yields (1:1 with PARSEC2 columns)
             ISOTOPE_COLS_P2 = {
                 'H': 7, 'He3': 8, 'He4': 9, 'Li7': 10, 'Be7': 11,
@@ -2099,8 +2168,8 @@ def load_parsec2_wind_ejecta(ejecta_dir):
     # = total_ejecta columns shifted by -3
     ELEM_COLS_WIND = {
         'H': [4], 'He': [5, 6], 'C': [9, 10], 'N': [11, 12], 'O': [13, 14, 15],
-        'F': [16], 'Ne': [17, 18, 19], 'Na': [20], 'Mg': [21, 22, 23],
-        'Al': [24, 25], 'Si': [26, 27], 'P': [28], 'S': [29], 'Cl': [30],
+        'F': [16], 'Ne': [17, 18, 19], 'Na': [20], 'Mg': [21, 22, 23, 24],   # 26Al -> 26Mg
+        'Al': [25], 'Si': [26, 27], 'P': [28], 'S': [29], 'Cl': [30],
         'Ar': [31], 'K': [32], 'Ca': [33], 'Sc': [34], 'Ti': [35], 'V': [36],
         'Cr': [37], 'Mn': [38], 'Fe': [39], 'Co': [40], 'Ni': [41],
         'Cu': [42], 'Zn': [43],
@@ -2115,10 +2184,7 @@ def load_parsec2_wind_ejecta(ejecta_dir):
         wind_files = glob(os.path.join(zdir, '*winds_ejecta.dat'))
         if not wind_files:
             continue
-        with open(wind_files[0]) as f:
-            lines = f.readlines()
-        for line in lines[4:]:  # skip 4 header lines
-            parts = line.split()
+        for parts in _parsec2_rows(wind_files[0], 4, lambda v: v[0] - v[1])[0]:   # wind = M_init - M_fin
             if len(parts) < 44:
                 continue
             M_init = float(parts[0])
@@ -2152,7 +2218,7 @@ def load_nugrid_yields(nugrid_dir):
             if m:
                 M, Z = float(m.group(1)), float(m.group(2))
                 current = (Z, M)
-                data[current] = {'yields': {}, 'Mfinal': 0, 'lifetime': 0}
+                data[current] = {'yields': {}, 'x0': {}, 'Mfinal': 0, 'lifetime': 0}
                 continue
             if current is None:
                 continue
@@ -2170,6 +2236,7 @@ def load_nugrid_yields(nugrid_dir):
                         yld = float(parts[1].lstrip('&'))
                         if elem in TRACKED_ELEMENTS:
                             data[current]['yields'][elem] = yld
+                            data[current]['x0'][elem] = float(parts[2].lstrip('&'))
                     except ValueError:
                         pass
     return data
@@ -2411,21 +2478,16 @@ def _interp_p2_yields(p2_ejecta, Z_p2, M, p2_Ms, init_comp):
         return None
     X_init = init_comp.get(Z_p2, {})
 
+    def _net(d, M_i):
+        M_ej = M_i - d['M_bar']
+        net = {e: d['yields'].get(e, 0.0) - X_init.get(e, 0.0) * M_ej for e in TRACKED_ELEMENTS}
+        return net
+
     # Clamp or interpolate
-    if M <= p2_Ms[0]:
-        d = p2_ejecta[(Z_p2, p2_Ms[0])]
-        M_ej = p2_Ms[0] - d['M_bar']
-        net = {}
-        for elem in TRACKED_ELEMENTS:
-            net[elem] = d['yields'].get(elem, 0.0) - X_init.get(elem, 0.0) * M_ej
-        return net, d['M_rem'], d['sn_type']
-    if M >= p2_Ms[-1]:
-        d = p2_ejecta[(Z_p2, p2_Ms[-1])]
-        M_ej = p2_Ms[-1] - d['M_bar']
-        net = {}
-        for elem in TRACKED_ELEMENTS:
-            net[elem] = d['yields'].get(elem, 0.0) - X_init.get(elem, 0.0) * M_ej
-        return net, d['M_rem'], d['sn_type']
+    if M <= p2_Ms[0] or M >= p2_Ms[-1]:
+        Me = p2_Ms[0] if M <= p2_Ms[0] else p2_Ms[-1]
+        d = p2_ejecta[(Z_p2, Me)]
+        return _net(d, Me), d['M_rem'], d['sn_type']
 
     # Bracket and linearly interpolate
     idx = int(np.searchsorted(p2_Ms, M)) - 1
@@ -2433,25 +2495,14 @@ def _interp_p2_yields(p2_ejecta, Z_p2, M, p2_Ms, init_comp):
     f = (M - M_lo) / (M_hi - M_lo)
     d_lo = p2_ejecta[(Z_p2, M_lo)]
     d_hi = p2_ejecta[(Z_p2, M_hi)]
+    if d_lo['sn_type'] != d_hi['sn_type']:   # different explosion types: the nearest model as a whole
+        Me, d = (M_lo, d_lo) if f < 0.5 else (M_hi, d_hi)
+        return _net(d, Me), (0.0 if d['sn_type'] == 5 else d['M_rem']), d['sn_type']
 
-    M_rem = d_lo['M_rem'] * (1 - f) + d_hi['M_rem'] * f
-    # SN type from nearest mass
-    sn_type = d_lo['sn_type'] if f < 0.5 else d_hi['sn_type']
-    # Override: if either bracket is PISN (type 5), check He core boundary
-    if d_lo['sn_type'] == 5 or d_hi['sn_type'] == 5:
-        # PISN is complete disruption — use the actual bracket's type
-        sn_type = d_lo['sn_type'] if f < 0.5 else d_hi['sn_type']
-        if sn_type == 5:
-            M_rem = 0.0
-
-    M_ej_lo = M_lo - d_lo['M_bar']
-    M_ej_hi = M_hi - d_hi['M_bar']
-    net = {}
-    for elem in TRACKED_ELEMENTS:
-        y_lo = d_lo['yields'].get(elem, 0.0) - X_init.get(elem, 0.0) * M_ej_lo
-        y_hi = d_hi['yields'].get(elem, 0.0) - X_init.get(elem, 0.0) * M_ej_hi
-        net[elem] = y_lo * (1 - f) + y_hi * f
-    return net, M_rem, sn_type
+    sn_type = d_lo['sn_type']
+    M_rem = 0.0 if sn_type == 5 else d_lo['M_rem'] * (1 - f) + d_hi['M_rem'] * f
+    n_lo, n_hi = _net(d_lo, M_lo), _net(d_hi, M_hi)
+    return {e: n_lo[e] * (1 - f) + n_hi[e] * f for e in TRACKED_ELEMENTS}, M_rem, sn_type
 
 
 def _interp_p2_wind_yields(p2_wind, Z_p2, M, p2_wind_Ms, init_comp):
@@ -2527,6 +2578,8 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
         n_kl16 = len(set((k[0], k[1]) for k in kl16_yields))
         print(f"    {n_kl16} (Z, M) grid points from K&L 2016", flush=True)
         # Merge: K&L 2016 overwrites K2010 at overlapping Z
+        # KL16 replaces K2010 from Z = 0.007 up (K2010 Z = 0.008, 0.02 dropped)
+        kar_yields = {k: v for k, v in kar_yields.items() if k[0] < 0.007}
         kar_yields.update(kl16_yields)
         kar_wd.update(kl16_wd)
     else:
@@ -2589,6 +2642,23 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
         nugrid_net_solar[elem] = total - x_init * nugrid_12_Mej
     lim25_elements = set(lim25_yields.keys())  # elements Limongi provides
 
+    ng_massive = sorted(m for (z, m) in nugrid if m >= 12)
+    def nugrid_net_per_mej(Zq, M):
+        """NuGrid net yield per ejected mass (against its own X0), linear in M over its >= 12 Msun models (clamped)
+        and in log Z between its grids (clamped)"""
+        def at(Zg, Mg):
+            d = nugrid[(Zg, Mg)]; mej = Mg - d['Mfinal']
+            return {e: (d['yields'].get(e, 0.0) - d['x0'].get(e, 0.0) * mej) / mej for e in TRACKED_ELEMENTS}
+        def at_M(Zg):
+            Ms = sorted(m for (z, m) in nugrid if z == Zg and m >= 12)
+            Mc = float(np.clip(M, Ms[0], Ms[-1])); j = min(int(np.searchsorted(Ms, Mc, side='right')) - 1, len(Ms) - 2)
+            f = (Mc - Ms[j]) / (Ms[j + 1] - Ms[j]); a, b = at(Zg, Ms[j]), at(Zg, Ms[j + 1])
+            return {e: (1 - f) * a[e] + f * b[e] for e in TRACKED_ELEMENTS}
+        lzs = np.log10(nugrid_Zs); lz = float(np.clip(np.log10(Zq), lzs[0], lzs[-1]))
+        j = min(int(np.searchsorted(lzs, lz, side='right')) - 1, len(nugrid_Zs) - 2)
+        f = (lz - lzs[j]) / (lzs[j + 1] - lzs[j]); a, b = at_M(nugrid_Zs[j]), at_M(nugrid_Zs[j + 1])
+        return {e: (1 - f) * a[e] + f * b[e] for e in TRACKED_ELEMENTS}
+
     N_Z, N_M = len(Z_grid), len(M_grid)
     yields = np.zeros((N_Z, N_M, N_ELEM))
     wind_yields = np.zeros((N_Z, N_M, N_ELEM))
@@ -2605,6 +2675,12 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
         Z_p2 = min(p2_Zs, key=lambda z: abs(np.log10(max(z, 1e-12)) - log_Z)) if p2_Zs else None
         Z_ng = min(nugrid_Zs, key=lambda z: abs(np.log10(max(z, 1e-12)) - log_Z)) if nugrid_Zs else None
         Z_kar = min(kar_Z, key=lambda z: abs(np.log10(z) - np.log10(max(Z, 1e-6)))) if kar_Z else None
+        # AGB net yields: linear in log Z between the bracketing Karakas metallicities (clamped at the ends)
+        if kar_Z:
+            lzk = np.log10(kar_Z); lz_c = float(np.clip(np.log10(Z), lzk[0], lzk[-1]))
+            jk = min(int(np.searchsorted(lzk, lz_c, side='right')) - 1, len(kar_Z) - 2) if len(kar_Z) > 1 else 0
+            kar_w = [(kar_Z[jk], 1.0)] if len(kar_Z) == 1 else \
+                [(kar_Z[jk], (lzk[jk + 1] - lz_c) / (lzk[jk + 1] - lzk[jk])), (kar_Z[jk + 1], (lz_c - lzk[jk]) / (lzk[jk + 1] - lzk[jk]))]
         feh = np.log10(max(Z, 1e-6) / Z_SOLAR)
         feh_near = min(cl_fehs, key=lambda x: abs(x - feh))
 
@@ -2624,13 +2700,14 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
                 if Z_kar is not None:
                     yield_src[iz, im] = 1
                     for ie, elem in enumerate(TRACKED_ELEMENTS):
-                        pairs = [(km, kar_yields[(Z_kar, km, elem)])
-                                 for km in kar_M if (Z_kar, km, elem) in kar_yields]
-                        if pairs:
-                            m_a = np.array([p[0] for p in pairs])
-                            y_a = np.array([p[1] for p in pairs])
-                            yields[iz, im, ie] = np.interp(
-                                M, m_a, y_a, left=y_a[0], right=y_a[-1])
+                        for Zk, wk in kar_w:
+                            pairs = [(km, kar_yields[(Zk, km, elem)])
+                                     for km in kar_M if (Zk, km, elem) in kar_yields]
+                            if pairs:
+                                m_a = np.array([p[0] for p in pairs])
+                                y_a = np.array([p[1] for p in pairs])
+                                yields[iz, im, ie] += wk * np.interp(
+                                    M, m_a, y_a, left=y_a[0], right=y_a[-1])
                 # AGB: no wind injection in code (M<8 skipped), full Karakas yields at death
                 # wind_yields stays 0 so sn_yield = net_yield = full Karakas yields
                 n_src[yield_src[iz, im]] += 1
@@ -2657,24 +2734,20 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
                 # Base yields from Limongi+2025 (total ejected at solar Z).
                 # Elements not in Limongi: net_yield = 0 → returned at birth
                 # composition (X_birth * Mej in the C injection formula).
+                # metallicity dependence and the elements Limongi lacks from NuGrid net yields (per unit ejecta)
+                ng_now, ng_ref = nugrid_net_per_mej(Z * NUGRID_REF_Z / Z_SOLAR, M), nugrid_net_per_mej(NUGRID_REF_Z, M)
                 for ie, elem in enumerate(TRACKED_ELEMENTS):
                     if elem in lim25_elements:
                         # Limongi+2025: interpolate in mass, convert total→net
                         y_total = np.interp(M, lim25_masses, lim25_yields[elem])
-                        y_net = y_total - X_init_solar.get(elem, 0.0) * M_ej_lim
-
-                        # Z-scaling from NuGrid for non-solar metallicities
-                        if Z_ng is not None and abs(log_Z - np.log10(Z_SOLAR)) > 0.15:
-                            scale = nugrid_z_scale.get(Z_ng, {}).get(elem, 1.0)
-                            y_net *= scale
+                        y_net = y_total - X_init_solar.get(elem, 0.0) * M_ej_lim \
+                            + M_ej_lim * (ng_now.get(elem, 0.0) - ng_ref.get(elem, 0.0))
                     else:
-                        # Not in Limongi — return at ambient (birth) composition
-                        y_net = 0.0
+                        y_net = M_ej_lim * ng_now.get(elem, 0.0)
 
                     yields[iz, im, ie] = y_net
 
-                # Limongi data is SN ejecta only; wind contribution is small
-                # for 8-14 Msun and not separated → wind_yields stays 0
+                # Limongi+2025 yields are lifetime totals; build_all subtracts the wind net (wind_yields) at the SN
                 n_src[2] += 1
                 continue
 
@@ -2756,6 +2829,83 @@ def scale_yields_for_fallback(yields, rem_type, rem_mass, M_preSN, M_grid, yield
 # ═══════════════════════════════════════════════════════════════
 # SECTION 8: Main builder
 # ═══════════════════════════════════════════════════════════════
+
+WIND_DX_M_MIN = 8.0          # GIZMO injects winds from 8 Msun up (resolvedism_fb.cc); below, the track surface stays
+WIND_DX_BLEND = (12.0, 14.0)  # BoOST -> PARSEC v2 wind enrichment, linear in log M (PARSEC v2 ejecta start at 14)
+
+
+def build_wind_dx(Z_grid, M_grid, base_dir):
+    """Wind enrichment per unit wind mass, dx[iz, im, k] = X_wind,k - X_birth,k of the source star, for M >= 8.
+    PARSEC v2 wind ejecta (all 27 elements) for M >= 14 at the nearest PARSEC v2 Z, linear in M between its masses;
+    below 14 BoOST (non-rotating, Na..Fe surface columns), log-Z interpolated between its grids, blended in log M over
+    WIND_DX_BLEND into PARSEC v2 at 14 Msun; above the BoOST metallicities (Z > 2 Z_MW) PARSEC v2 at 14 Msun.
+    Returns dx and the PARSEC v2 weight w_p2 (NaN below 8 Msun)."""
+    p2_wind = load_parsec2_wind_ejecta(os.path.join(base_dir, 'parsec2_vms'))
+    p2_x0 = _parse_parsec2_init_comp(os.path.join(base_dir, 'parsec2_vms'))
+    boost = load_boost_wind_dx(os.path.join(base_dir, 'boost'))
+    iH = TRACKED_ELEMENTS.index('H')
+    p2_Zs = sorted(set(z for z, _ in p2_wind))
+    bg = sorted((BOOST_GRIDS[g], g) for g in boost)
+    N_Z, N_M = len(Z_grid), len(M_grid)
+    dx = np.zeros((N_Z, N_M, N_ELEM)); w_p2 = np.full((N_Z, N_M), np.nan)
+
+    def p2_dx(Zp, M):
+        Ms = np.array(sorted(m for z, m in p2_wind if z == Zp))
+        rows = []
+        for m in Ms:
+            d = p2_wind[(Zp, m)]; Wp = m - d['M_fin']
+            r = np.array([d['yields'].get(e, 0.0) / Wp - p2_x0[Zp].get(e, 0.0) for e in TRACKED_ELEMENTS])
+            r[iH] -= r.sum()   # Li, Be and rounding of the ejecta file
+            rows.append(r)
+        rows = np.array(rows)
+        return np.array([np.interp(M, Ms, rows[:, k]) for k in range(N_ELEM)])
+
+    def boost_dx(Z, M):
+        lz = np.log10(Z); lzs = np.log10([z for z, _ in bg])
+        if lz <= lzs[0] or lz >= lzs[-1]:
+            g = bg[0][1] if lz <= lzs[0] else bg[-1][1]
+            return _interp_rows_logx(M, *boost[g])
+        j = int(np.searchsorted(lzs, lz)) - 1; f = (lz - lzs[j]) / (lzs[j + 1] - lzs[j])
+        return (1 - f) * _interp_rows_logx(M, *boost[bg[j][1]]) + f * _interp_rows_logx(M, *boost[bg[j + 1][1]])
+
+    for iz, Z in enumerate(Z_grid):
+        Zp = min(p2_Zs, key=lambda z: abs(np.log10(max(z, 1e-12)) - np.log10(Z)))
+        # BoOST weight in Z: 1 up to its highest grid, 0 from twice that
+        wz = float(np.clip(np.log10(2 * bg[-1][0] / Z) / np.log10(2), 0, 1)) if boost else 0.0
+        for im, M in enumerate(M_grid):
+            if M < WIND_DX_M_MIN:
+                continue
+            wm = float(np.clip(np.log10(M / WIND_DX_BLEND[0]) / np.log10(WIND_DX_BLEND[1] / WIND_DX_BLEND[0]), 0, 1))
+            w = 1.0 - (1.0 - wm) * wz
+            d = p2_dx(Zp, max(M, WIND_DX_BLEND[1]))
+            if w < 1.0:
+                d = w * d + (1.0 - w) * boost_dx(Z, M)
+            dx[iz, im], w_p2[iz, im] = d, w
+    return dx, w_p2
+
+
+def wind_mass_fractions(X, net, dM, s):
+    """Wind mass fraction per step: x_k(t) = X_k + net_k f(t) / sum f dM with f in [0, 1], f = 0 at ZAMS: the track's
+    surface He excess s(t) scaled to peak 1; where that cannot carry the most depleted element without x_k < 0,
+    f = min(1, lam max(f_He, fraction of the wind mass lost before the step)) with lam from bisection.
+    sum_k x_k = 1 at every step and sum_t x_k dM = X_k W + net_k."""
+    W = dM.sum()
+    neg = net < 0
+    F_min = float(np.max(-net[neg] / X[neg])) if neg.any() else 0.0
+    f = s / s.max() if s.max() > 0 else np.zeros_like(s)
+    if (f * dM).sum() < max(F_min, 1e-12 * W):
+        g = np.maximum(f, (np.cumsum(dM) - dM) / W)   # wind mass lost before the step: 0 at ZAMS
+        F = lambda lam: (np.minimum(1.0, lam * g) * dM).sum()
+        lo, hi = 1.0, 1.0
+        while F(hi) < F_min * (1 + 1e-12) and hi < 1e15:
+            hi *= 2.0
+        for _ in range(200):
+            mid = 0.5 * (lo + hi)
+            lo, hi = (mid, hi) if F(mid) < F_min * (1 + 1e-12) else (lo, mid)
+        f = np.minimum(1.0, hi * g)
+    x = X[None, :] + np.outer(f / (f * dM).sum(), net)
+    return np.maximum(x, 0.0)
+
 
 def build_all(base_dir, output_file):
     import h5py
@@ -3011,80 +3161,10 @@ def build_all(base_dir, output_file):
     # ── Scale yields for BH/PPISN fallback ──
     scale_yields_for_fallback(yields, rem_type, rem_mass, M_preSN, M_grid, yield_src=yield_src)
 
-    # ── Override M_preSN from ejecta data for PARSEC v2 entries ──
-    # The PARSEC v2 track files and ejecta files can disagree on M_fin (pre-SN
-    # mass) due to different wind prescriptions.  The ejecta data is authoritative
-    # since it's self-consistent with the yields.  Override M_preSN from ejecta
-    # when the discrepancy exceeds 1 Msun.
-    p2_ejecta_mfin = load_parsec2_ejecta(os.path.join(base_dir, 'parsec2_vms'))
-    p2_Zs = sorted(set(k[0] for k in p2_ejecta_mfin.keys()))
-    n_overridden = 0
-    for iz in range(N_Z):
-        Z_p2 = min(p2_Zs, key=lambda z: abs(np.log10(max(z, 1e-12)) - np.log10(max(Z_grid[iz], 1e-12)))) if p2_Zs else None
-        for im in range(N_M):
-            if yield_src[iz, im] != 4:
-                continue  # only PARSEC v2
-            key = (Z_p2, M_grid[im])
-            if key not in p2_ejecta_mfin:
-                continue
-            M_fin_ejecta = p2_ejecta_mfin[key]['M_fin']
-            if abs(M_preSN[iz, im] - M_fin_ejecta) > 1.0:
-                M_preSN[iz, im] = M_fin_ejecta
-                n_overridden += 1
-    if n_overridden > 0:
-        print(f"  Overrode {n_overridden} M_preSN from ejecta data (track/ejecta disagreement)")
-
-    # ── Enforce mass conservation ──
-    # For WD remnants (AGB progenitors, M < 8): no continuous winds in simulation,
-    # so particle mass at death ≈ M_init. Set M_preSN = M_init so that
-    # ejecta = M_init - M_WD (Karakas) is correct.
-    # For SN remnants: M_preSN from tracks is correct (winds ARE modeled for M >= 8).
-    n_fixed = 0
-    for iz in range(N_Z):
-        for im in range(N_M):
-            if rem_type[iz, im] == 0:  # WD
-                M_preSN[iz, im] = M_grid[im]
-                n_fixed += 1
-            else:
-                # Clamp M_preSN <= M_init (track interpolation can overshoot
-                # at low Z where PARSEC grid masses differ from ours)
-                if M_preSN[iz, im] > M_grid[im]:
-                    M_preSN[iz, im] = M_grid[im]
-                    n_fixed += 1
-                if M_preSN[iz, im] > 0 and rem_mass[iz, im] > M_preSN[iz, im]:
-                    rem_mass[iz, im] = M_preSN[iz, im]
-                    n_fixed += 1
-    if n_fixed > 0:
-        print(f"  Fixed {n_fixed} M_preSN/remnant_mass entries for mass conservation")
-
-    # ── Enforce SN-ejecta closure: Σ_k elem_ej_SN = M_preSN − rem_mass ──
-    # The runtime FB injection requires this invariant exactly: if it fails, cells
-    # receive bulk mass with mismatched elemental composition → ΣEA != 1 per cell.
-    # For FSN/DBH (failed SN, no envelope ejecta): force rem_mass = M_preSN.
-    # For ECSN/CCSN/PPISN/PISN: rescale per-element yields so Σ_k = (M_preSN − rem_mass).
-    n_fsn_pin = 0
-    n_yield_rescale = 0
-    for iz in range(N_Z):
-        for im in range(N_M):
-            rt = rem_type[iz, im]
-            if rt in (3, 6):  # FSN, DBH — no explosion ejecta
-                if M_preSN[iz, im] > 0 and rem_mass[iz, im] < M_preSN[iz, im]:
-                    rem_mass[iz, im] = M_preSN[iz, im]
-                    n_fsn_pin += 1
-                yields[iz, im, :] = 0.0
-            elif rt in (1, 2, 4, 5):  # ECSN, CCSN, PPISN, PISN
-                budget = M_preSN[iz, im] - rem_mass[iz, im]
-                if budget <= 0:
-                    yields[iz, im, :] = 0.0
-                    continue
-                SumSN = yields[iz, im, :].sum()
-                if SumSN <= 0:
-                    continue
-                if abs(SumSN - budget) / budget > 1.0e-9:
-                    yields[iz, im, :] *= (budget / SumSN)
-                    n_yield_rescale += 1
-    print(f"  FSN/DBH rem_mass pinned to M_preSN: {n_fsn_pin} entries")
-    print(f"  SN yields rescaled to (M_preSN-rem) budget: {n_yield_rescale} entries")
+    # ── Pre-SN mass: the track's final mass (M_preSN_scalar). For M >= 8 the wind block below delivers all mass lost
+    # down to it (incl. the part after the last alive age-grid point); M_preSN is then M_init - total wind. The yields
+    # stay net yields; per-element SN closure is done on absolute ejecta in the writer (_absolute_ejecta). ──
+    M_final_track = np.minimum(M_preSN, M_grid[None, :])
 
     # ── Build cumulative wind ejecta BEFORE writing, then redefine M_current
     # to satisfy the wind ledger M_init = M_current(t) + Σ_k cum_wind(t, k).
@@ -3098,6 +3178,27 @@ def build_all(base_dir, output_file):
     ssum = surface.astype(np.float64).sum(axis=-1, keepdims=True)
     surface = np.where(ssum > 0, surface / np.where(ssum > 0, ssum, 1.0), surface).astype(surface.dtype)
     print(f"  surface abundances normalized: row sums were {ssum[ssum > 0].min():.4f}..{ssum[ssum > 0].max():.4f}")
+    # birth composition per Z (also written as X_init): solar pattern x Z/Z_SOLAR for metals, solar He, H = remainder
+    iH  = TRACKED_ELEMENTS.index('H')
+    iHe = TRACKED_ELEMENTS.index('He')
+    X_init = np.zeros((N_Z, N_ELEM))
+    for iz in range(N_Z):
+        Zv = Z_grid[iz]
+        for k, e in enumerate(TRACKED_ELEMENTS):
+            if e in ('H', 'He'):
+                continue
+            X_init[iz, k] = SOLAR_MASS_FRAC[e] * (Zv / Z_SOLAR)
+        X_init[iz, iHe] = SOLAR_MASS_FRAC['He']
+        X_init[iz, iH]  = 1.0 - X_init[iz, iHe] - X_init[iz, [k for k in range(N_ELEM) if k not in (iH, iHe)]].sum()
+    assert np.allclose(X_init.sum(axis=1), 1.0, atol=1e-12), 'X_init rows must sum to 1'
+
+    # Winds of M >= 8: birth composition plus the source's wind enrichment (build_wind_dx) over the track's wind mass;
+    # the track gives the timing (mass lost per step, surface He excess as mixing profile). wind_yields becomes exactly
+    # this wind net, so the SN (net_total - wind_yields) does not deliver the wind-phase production again.
+    wind_dx, wind_w_p2 = build_wind_dx(Z_grid, M_grid, base_dir)
+    wind_yields[:] = 0.0
+    n_wind_capped = 0; n_late = 0; late_max = 0.0
+    surf_out = surface.astype(np.float64).copy()   # rewritten at alive ages with the composition used for the wind
     elem_ej_wind = np.zeros((N_Z, N_M, N_AGE, N_ELEM), dtype=np.float32)
     for iz in range(N_Z):
         for im in range(N_M):
@@ -3106,14 +3207,47 @@ def build_all(base_dir, output_file):
             drop = np.maximum(0.0, M_t[:-1] - M_t[1:])
             dM = np.zeros(N_AGE)
             dM[1:] = np.where(alive, drop, 0.0)
+            ia = np.where(M_t > 0)[0]
+            if np.isfinite(wind_w_p2[iz, im]) and ia.size > 1:
+                dM[ia[0]] += max(0.0, M_grid[im] - M_t[ia[0]])               # lost before ZAMS: with the first step
+                late = (M_grid[im] - dM.sum()) - M_final_track[iz, im]   # lost after the last alive grid age
+                if late > 0:
+                    dM[ia[-1]] += late
+                    n_late += 1; late_max = max(late_max, late)
             if dM.sum() <= 0:
+                if ia.size:   # no mass loss: surface at birth composition plus the track's change
+                    s0 = surface[iz, im, ia[0]].astype(np.float64)
+                    xs = np.maximum(X_init[iz][None, :] + surface[iz, im, ia].astype(np.float64) - s0, 0.0)
+                    surf_out[iz, im, ia] = xs / xs.sum(axis=1, keepdims=True)
                 continue
-            cum = np.cumsum(surface[iz, im].astype(np.float64) * dM[:, None], axis=0)
+            if np.isfinite(wind_w_p2[iz, im]):
+                W = dM.sum()
+                net = wind_dx[iz, im] * W
+                cap = -X_init[iz] * W                     # an element cannot leave in the wind more than fully depleted
+                n_wind_capped += int((net < cap).any())
+                net = np.maximum(net, cap)
+                net[iH] -= net.sum()
+                Y = surface[iz, im, :, iHe].astype(np.float64)
+                s = np.maximum(0.0, Y - Y[ia[0]]) if ia.size else np.zeros(N_AGE)
+                xw = wind_mass_fractions(X_init[iz], net, dM, s)
+                xw /= xw.sum(axis=1, keepdims=True)
+                wind_yields[iz, im] = net
+            else:   # M < 8: birth composition plus the track's own surface change since ZAMS
+                s0 = surface[iz, im, ia[0]].astype(np.float64) if ia.size else 0.0
+                xw = np.maximum(X_init[iz][None, :] + surface[iz, im].astype(np.float64) - s0, 0.0)
+                xw /= xw.sum(axis=1, keepdims=True)
+            if ia.size:
+                surf_out[iz, im, ia] = xw[ia]
+            cum = np.cumsum(xw * dM[:, None], axis=0)
             alive_idx = np.where(M_t > 0)[0]
             if alive_idx.size > 0:
                 last = alive_idx[-1]
                 cum[last+1:] = cum[last]
             elem_ej_wind[iz, im, :, :] = cum.astype(np.float32)
+    w = wind_w_p2[np.isfinite(wind_w_p2)]
+    print(f"  wind composition (M >= {WIND_DX_M_MIN}): PARSEC v2 {np.sum(w == 1)}, BoOST {np.sum(w == 0)}, "
+          f"blend {np.sum((w > 0) & (w < 1))} (Z, M) points; {n_wind_capped} with an element capped at full depletion")
+    print(f"  wind lost after the last alive grid age added to the last interval: {n_late} (Z, M) points, max {late_max:.2f} Msun")
 
     # Redefine M_current = M_init − Σ_k cum_wind(t).  Preserve post-death
     # sentinel (M_current == 0 marker) — elem_ej_wind plateaus past death so
@@ -3183,7 +3317,7 @@ def build_all(base_dir, output_file):
             ds.attrs['units'] = units
             ds.attrs['shape'] = '(N_Z, N_M, N_age)'
 
-        ds = f.create_dataset('surface_abundances', data=surface.astype(np.float32), **comp)
+        ds = f.create_dataset('surface_abundances', data=surf_out.astype(np.float32), **comp)
         ds.attrs['units'] = 'mass fractions, (N_Z, N_M, N_age, N_elements)'
         ds.attrs['elements'] = TRACKED_ELEMENTS
 
@@ -3231,26 +3365,23 @@ def build_all(base_dir, output_file):
         REM_WD = 0; REM_ECSN = 1; REM_CCSN = 2; REM_PPISN = 4; REM_PISN = 5
         SN_TYPES = {REM_ECSN, REM_CCSN, REM_PPISN, REM_PISN}
 
-        X_init = np.zeros((N_Z, N_ELEM))
-        iH  = TRACKED_ELEMENTS.index('H')
-        iHe = TRACKED_ELEMENTS.index('He')
-        for iz in range(N_Z):
-            Zv = Z_grid[iz]
-            for k, e in enumerate(TRACKED_ELEMENTS):
-                if e in ('H', 'He'):
-                    continue
-                X_init[iz, k] = SOLAR_MASS_FRAC[e] * (Zv / Z_SOLAR)
-            X_init[iz, iHe] = SOLAR_MASS_FRAC['He']
-            X_init[iz, iH]  = 1.0 - X_init[iz, iHe] - X_init[iz, [k for k in range(N_ELEM) if k not in (iH, iHe)]].sum()
-        assert np.allclose(X_init.sum(axis=1), 1.0, atol=1e-12), 'X_init rows must sum to 1'
+        # X_init: built with the wind composition above
 
-        def _absolute_ejecta(X_row, net_minus_wind, Mej, iH_idx):
+        closure = {'resid': 0.0, 'clip': 0.0, 'n_clip': 0, 'scale': 0.0, 'at': None}
+        def _absolute_ejecta(X_row, net_minus_wind, Mej, iH_idx, M_star):
+            """X Mej + net per element; a residual of sum(net) != 0 goes to H, negative elements are clipped to 0"""
             if Mej <= 0:
                 return np.zeros_like(X_row)
-            ej = np.maximum(X_row * Mej + net_minus_wind, 0.0)
+            raw = X_row * Mej + net_minus_wind
+            closure['resid'] = max(closure['resid'], abs(raw.sum() - Mej) / M_star)
+            if (raw < 0).any():
+                closure['n_clip'] += 1; closure['clip'] = max(closure['clip'], -raw[raw < 0].sum() / Mej)
+            ej = np.maximum(raw, 0.0)
             ej[iH_idx] = max(0.0, ej[iH_idx] + (Mej - ej.sum()))
             s = ej.sum()
             if s > 0:
+                if abs(Mej / s - 1) > closure['scale']:
+                    closure['scale'], closure['at'] = abs(Mej / s - 1), (M_star, Mej)
                 ej *= Mej / s
             return ej
 
@@ -3266,11 +3397,15 @@ def build_all(base_dir, output_file):
                 if rt in SN_TYPES:
                     Mej = Mp - rm
                     if Mej > 0:
-                        elem_ej_SN[iz, im] = _absolute_ejecta(X_init[iz], snw, Mej, iH)
+                        elem_ej_SN[iz, im] = _absolute_ejecta(X_init[iz], snw, Mej, iH, Mi)
                 elif rt == REM_WD:
                     Mej = Mp - rm
-                    if Mej > 0:
-                        elem_ej_AGB[iz, im] = _absolute_ejecta(X_init[iz], yields[iz, im], Mej, iH)
+                    if Mej > 0 and Mi - rm > 0:   # Karakas lifetime budget (no winds below 8 Msun), scaled to Mej
+                        elem_ej_AGB[iz, im] = _absolute_ejecta(X_init[iz], yields[iz, im], Mi - rm, iH, Mi) * (Mej / (Mi - rm))
+        print(f"  SN/AGB closure: max |sum(X Mej + net) - Mej| / M_init = {closure['resid']:.2e} (to H); "
+              f"{closure['n_clip']} cells with negative elements clipped, max {closure['clip']:.2e} of Mej; "
+              f"max rescale |f - 1| = {closure['scale']:.2e} at (M, Mej) = {closure['at']}")
+        assert closure['scale'] < 0.05, 'SN/AGB closure would rescale every element (H exhausted)'
 
         # SN, AGB, X_init go into the main table.
         ds = f.create_dataset('elem_ej_SN_mass', data=elem_ej_SN, **comp)
@@ -3303,7 +3438,9 @@ def build_all(base_dir, output_file):
         dsw = fw.create_dataset('elem_ej_wind_cumulative', data=elem_ej_wind, **comp)
         dsw.attrs['units'] = 'Msun'
         dsw.attrs['description'] = ('Cumulative wind ejecta per element from ZAMS to age, '
-                                     'integrated as Σ X_surf[s,k] * max(0, M_curr[s-1] - M_curr[s]). '
+                                     'integrated as Σ x_wind[s,k] * max(0, M_curr[s-1] - M_curr[s]). '
+                                     'M >= 8: x_wind = X_init + wind enrichment of PARSEC v2 wind ejecta (M >= 14) / '
+                                     'BoOST surface (below), timed by the track surface He excess; M < 8: track surface. '
                                      'Sigma_k = M_init - M_current(age) within lifetime.')
         fw.attrs['description'] = ('Per-element cumulative wind ejecta companion to '
                                     'stellar_tables_unified.hdf5. Split out for file size.')
