@@ -97,7 +97,7 @@ def edge_excess(y, M):
     return worst
 
 
-@test(xfail='MIST v2.5 raw tracks: post-MS duration peaks at the He-flash transition, +0.13 dex from 1.95 to 2.0 Msun at [Fe/H] = -0.25 (raw)')
+@test(xfail='MIST v2.5 raw tracks: post-MS duration peaks at the He-flash transition near 2 Msun, +0.11 dex from 1.95 to 2.0 Msun at [Fe/H] = -0.75, [a/Fe] = +0.4 (+0.13 at -0.25, [a/Fe] = 0)')
 def blend_edges_continuous_post_ms(t, w, lut):
     """at the 2.0 and 2.5 Msun blend edges: post-MS duration, remnant mass, returned mass, L_bol at half life
     have no excess step > 0.05 dex at any Z (the unblended join stepped -0.13 dex in post-MS duration)"""

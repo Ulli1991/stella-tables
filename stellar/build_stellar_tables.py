@@ -218,7 +218,7 @@ MIST_SURFACE_ELEM = {
 }
 
 # MIST release and [a/Fe] (set from the command line). Grid Z = Zinit of the grid's track headers (configure_mist).
-MIST = {'version': 'v2.5', 'afe': 'p0'}
+MIST = {'version': 'v2.5', 'afe': 'p4'}
 MIST_VERSIONS = ('v2.5', 'v1.2')
 MIST_AFE = {'m2': -0.2, 'p0': 0.0, 'p2': 0.2, 'p4': 0.4, 'p6': 0.6}   # v2.5 only; v1.2 is solar-scaled
 MIST_M_MAX = 3.0   # MIST tracks read up to this mass (MIST below 2.0, blended into PARSEC v2 up to 2.5 Msun)
@@ -3768,11 +3768,11 @@ if __name__ == '__main__':
                     help='atlas9 only, required: legacy (log g = 4, Z_sun, extrapolate), clamp (point log g / Z, clamped '
                          'to the grid), masked_planck (point log g / Z, Planck where the LUT has no model)')
     ap.add_argument('--mist', choices=MIST_VERSIONS, default='v2.5', help='MIST release for M < 2.5 Msun (default v2.5)')
-    ap.add_argument('--mist-alpha-fe', choices=sorted(MIST_AFE), default='p0',
-                    help='MIST v2.5 [a/Fe] grid: m2 p0 p2 p4 p6 = -0.2 ... +0.6 (default p0, solar-scaled)')
+    ap.add_argument('--mist-alpha-fe', choices=sorted(MIST_AFE), default='p4',
+                    help='MIST v2.5 [a/Fe] grid: m2 p0 p2 p4 p6 = -0.2 ... +0.6 (default p4 = +0.4; p0 solar-scaled)')
     a = ap.parse_args()
-    if a.mist == 'v1.2' and a.mist_alpha_fe != 'p0':
-        ap.error('MIST v1.2 is solar-scaled only')
+    if a.mist == 'v1.2':
+        a.mist_alpha_fe = 'p0'   # v1.2 is solar-scaled only
     if (a.radiation_source == 'atlas9') != (a.atlas9_lookup is not None):
         ap.error('--atlas9-lookup is required with --radiation-source atlas9 and not allowed otherwise')
     RADIATION['source'], RADIATION['lookup'] = a.radiation_source, a.atlas9_lookup

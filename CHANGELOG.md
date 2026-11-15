@@ -3,12 +3,12 @@
 ## fix/wind-composition (not yet pinned in GIZMO)
 
 Compared with the tables GIZMO pins (stella-tables a4830ab; unified 14a23087…, wind 5ad36096…). Built with
-`./build.sh` (radiation source `hotstar_stack`, MIST v2.5 [a/Fe] = 0). Content hashes (GIZMO's
+`./build.sh` (radiation source `hotstar_stack`, MIST v2.5 [a/Fe] = +0.4). Content hashes (GIZMO's
 `scripts/stella_tables_hash.py`):
 
 | file | hash |
 |---|---|
-| `stellar_tables_unified.hdf5` | b152f7686fdd09339231b2a39e573d421ddd1791d48f9f1bc5eae72fd8561581 |
+| `stellar_tables_unified.hdf5` | 7593d9a85ff134441d0e417302b5fd1d40da7aba04f0d8727e2dca9ec3213613 |
 | `stellar_wind_cumulative.hdf5` | 89f40e36aa5abe3ed3846973204dba5fec0b2598f5af2d9b0a9fbd9495d49285 |
 | chemistry tables | unchanged |
 
@@ -32,7 +32,10 @@ Compared with the tables GIZMO pins (stella-tables a4830ab; unified 14a23087…,
   1.4-2x for metals at Z = 1e-4-5e-4 and 0.84x for Mg).
 
 ### Evolution
-- MIST v2.5 replaces v1.2 below 2.5 Msun (grid Z from the track headers, tracks to the hottest post-AGB point).
+(Lifetime and t_PMS ratios below 2.5 Msun quoted for [a/Fe] = 0; +0.4 changes them by <= 1% for Z <= 1e-3 and
+2-8% for 1-2 Msun at Z = 0.01.)
+- MIST v2.5 replaces v1.2 below 2.5 Msun (grid Z from the track headers, tracks to the hottest post-AGB point),
+  [a/Fe] = +0.4 by default (`STELLA_MIST_ALPHA_FE=p0` for solar-scaled).
 - Same ZAMS for MIST and PARSEC v2 (central H down by 1e-4): t_PMS 0.5-0.8x below 2.5 Msun, lifetimes 1-5% shorter
   there, no t_PMS kink at the 2.0-2.5 Msun blend.
 - Mass scale of interpolated tracks from the birth mass (was the trimmed-ZAMS mass: +0.7% at 500 Msun).

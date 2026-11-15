@@ -67,9 +67,10 @@ log Z between their bracketing metallicity grids, in fractional-lifetime space, 
 bracketing (MIST v2.5 [Fe/H] = +0.5 ends its 0.10-0.45 Msun tracks before the main sequence; the next grid down is
 used). MIST is read up to 3 Msun (`MIST_M_MAX`). `track_source` marks the dominant catalogue (blend weight >= 0.5).
 Both catalogues start the table age at the same ZAMS, central H down by 1e-4, so t_PMS and lifetimes join across the
-blend. Grid Z = the Zinit of each grid's track headers. MIST v2.5 [a/Fe] (`--mist-alpha-fe`, default p0 =
-solar-scaled, matching the birth composition X_init); at fixed total Z, +0.4 changes MS lifetimes by <= 1% for
-Z <= 1e-3 and by 2-8% for 1-2 Msun at Z = 0.01.
+blend. Grid Z = the Zinit of each grid's track headers. MIST v2.5 [a/Fe] (`--mist-alpha-fe`,
+`STELLA_MIST_ALPHA_FE`): default p4 = +0.4, p0 = solar-scaled selectable; at fixed total Z, +0.4 changes MS lifetimes
+by <= 1% for Z <= 1e-3 and by 2-8% for 1-2 Msun at Z = 0.01. The reduced catalogue carries the p4 and p0 tracks the
+builder reads.
 
 ## Radiation
 
@@ -200,8 +201,8 @@ Expected failures (XFAIL) are listed in the test output with their reason and do
 
 ## Known limitations
 
-* MIST v2.5's own tracks peak in post-MS duration at the He-flash transition (+0.13 dex from 1.95 to 2.0 Msun at
-  [Fe/H] = -0.25), which the table reproduces (XFAIL `blend_edges_continuous_post_ms` in `test_extended.py`).
+* MIST v2.5's own tracks peak in post-MS duration at the He-flash transition near 2 Msun (+0.11 dex from 1.95 to
+  2.0 Msun at [Fe/H] = -0.75, [a/Fe] = +0.4), which the table reproduces (XFAIL `blend_edges_continuous_post_ms` in `test_extended.py`).
 * Above the catalogue metallicity ranges (PARSEC v2 Z > 0.03, MIST v2.5 Z > 0.047) tracks are held at the edge, so
   lifetimes and remnants at Z = 0.04, 0.06 equal those at the top grid; yields and winds follow each Z's X_init.
 * The BoOST download location is not confirmed (`fetch/README.md`); BoOST enters only the wind composition of
