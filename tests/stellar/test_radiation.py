@@ -13,6 +13,7 @@
 import os, re, sys
 from glob import glob
 import numpy as np, h5py
+trapz = getattr(np, 'trapezoid', None) or np.trapz   # numpy >= 2 renamed it
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), 'stellar'))
@@ -30,7 +31,7 @@ def band_integration_planck(t, w, root):
     for T in (20000., 39000., 60000.):
         lam = np.concatenate([np.arange(90, 1000, 2.), np.arange(1000, 30000, 50.), np.arange(30000, 2e6, 2000.)])
         B = lambda l: 2 * h * c**2 / (l * 1e-8)**5 / np.expm1(h * c / (l * 1e-8 * k * T)) * 1e-8
-        F = B(lam); _, qf = S.integrate_bands(lam, F); Ft = np.trapz(F, lam)
+        F = B(lam); _, qf = S.integrate_bands(lam, F); Ft = trapz(F, lam)
         for name, Elo, Ehi in S.PHOTON_RATE_BANDS:
             if name == 'Q_He1' and T < 30000: continue     # 1e-9 of Q_H: trapezoid curvature of the Wien tail
             lo, hi = (S.HC_eV_A / Ehi if Ehi else lam[0]), S.HC_eV_A / Elo
@@ -64,7 +65,7 @@ def _table_integral(t, key, iz, im, a0=0.0):
     la, v = la[alive], v[alive]
     x = np.linspace(la[0], la[-1], 20000); y = 10 ** np.interp(x, la, v); age = 10 ** x
     m = (age >= a0) & (age <= t['lifetime_yr'][iz, im])   # GIZMO ends the star at its lifetime
-    return np.trapz(y[m], age[m])
+    return trapz(y[m], age[m])
 
 
 @test
@@ -78,7 +79,7 @@ def lbol_time_integral_vs_raw_track(t, w, root):
         i0 = int(np.argmax(tr['XCEN'] < tr['XCEN'][0] - 1e-4)); age = tr['AGE'] - tr['AGE'][i0]   # ZAMS as the builder
         Lr = 10 ** tr['LOG_L'] * 3.828e33
         ms_end = age[int(np.argmax(tr['XCEN'] < 1e-4))]
-        raw_ms, raw_post = np.trapz(Lr[(age >= 0) & (age <= ms_end)], age[(age >= 0) & (age <= ms_end)]), np.trapz(Lr[age >= ms_end], age[age >= ms_end])
+        raw_ms, raw_post = trapz(Lr[(age >= 0) & (age <= ms_end)], age[(age >= 0) & (age <= ms_end)]), trapz(Lr[age >= ms_end], age[age >= ms_end])
         tab_all, tab_post = _table_integral(t, 'log_L_bol', iz, im), _table_integral(t, 'log_L_bol', iz, im, ms_end)
         r_post, r_all = tab_post / raw_post, tab_all / (raw_ms + raw_post)
         worst = max(worst, abs(np.log10(r_post)), abs(np.log10(r_all)))
@@ -96,8 +97,8 @@ def photons_vs_parsec2_tables(t, w, root):
         a = np.loadtxt(f[0], comments='#', skiprows=3)
         age = a[:, 0] * 1e6
         iz, im = int(np.argmin(abs(Zt - Z))), int(np.argmin(abs(Mt - M)))
-        par = {'H': np.trapz(10 ** a[:, 5], age), 'HeI': np.trapz(10 ** a[:, 6], age), 'HeII': np.trapz(10 ** a[:, 7], age),
-               'LW': np.trapz(np.maximum(10 ** a[:, 9] - 10 ** a[:, 5], 0), age)}
+        par = {'H': trapz(10 ** a[:, 5], age), 'HeI': trapz(10 ** a[:, 6], age), 'HeII': trapz(10 ** a[:, 7], age),
+               'LW': trapz(np.maximum(10 ** a[:, 9] - 10 ** a[:, 5], 0), age)}
         tab = {'H': _table_integral(t, 'log_Q_ion', iz, im), 'HeI': _table_integral(t, 'log_Q_He0', iz, im),
                'HeII': _table_integral(t, 'log_Q_He1', iz, im),
                'LW': _table_integral(t, 'log_L_LW', iz, im) / (12.4 * 1.602e-12)}   # LW photons at the band mean energy
