@@ -151,15 +151,19 @@ def x_init_consistent_with_Z(t):
 
 @test
 def imf_integrated_yields(t):
-    """Kroupa IMF, 0.08-100 Msun, solar Z: CCSN+AGB metal yield 0.005-0.05 per Msun formed; Fe 3e-4-3e-3"""
+    """Kroupa IMF, 0.08-100 Msun, solar Z: CCSN + AGB + wind (M >= 8) metal yield 0.008-0.03 per Msun formed;
+    Fe 3e-4-1.5e-3 (no SN Ia)"""
     m = t.M; iz = t.iZsun; s = (m >= 0.08) & (m <= 100)
     xi = np.where(m < 0.5, m ** -1.3, 0.5 * m ** -2.3)
     w = np.gradient(m) * xi; w = w * s; w /= np.sum(w * m)
     ej = t['elem_ej_SN_mass'][iz] + t['elem_ej_AGB_mass'][iz]
+    wind_path = os.path.join(os.path.dirname(t.f.filename), 'stellar_wind_cumulative.hdf5')
+    with h5py.File(wind_path, 'r') as fw:
+        ej = ej + np.where(m[:, None] >= 8, fw['elem_ej_wind_cumulative'][iz, :, -1, :], 0.0)
     xin = t['X_init'][iz]
     net = ej - np.outer(ej.sum(1), xin)          # net = ejected minus initial composition
     yZ = np.sum(w[:, None] * net[:, 2:]); yFe = np.sum(w * net[:, ELEMS.index('Fe')])
-    return 0.005 < yZ < 0.05 and 3e-4 < yFe < 3e-3, f'y_Z={yZ:.4f} y_Fe={yFe:.2e} per Msun formed'
+    return 0.008 < yZ < 0.03 and 3e-4 < yFe < 1.5e-3, f'y_Z={yZ:.4f} y_Fe={yFe:.2e} per Msun formed'
 
 @test
 def provenance_attrs(t):
