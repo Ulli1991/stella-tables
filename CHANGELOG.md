@@ -3,7 +3,7 @@
 ## fix/yields-8-14-and-tests (not pinned in GIZMO, not released)
 
 Compared with tables-e3a707a. Content hashes (GIZMO's `scripts/stella_tables_hash.py`): `stellar_tables_unified.hdf5`
-f3bc1b0db57cee58b5ca530a6e99c0eac4d2bbf49d91e223099cb2858b786677, `stellar_wind_cumulative.hdf5`
+9e09a203c4d23235a5b80c3a10719160c1c021e853575a99956ace59459d9dce, `stellar_wind_cumulative.hdf5`
 1fff3f620561bc2d5c7be9b08119aa0fcb95319304d65f89dd7a467eda1253eb. Chemistry files unchanged. Needs the GIZMO reader of
 stella_dev fix/late-wind-release (elem_ej_wind_total, type_ia_yields per Z); older readers refuse these tables.
 
@@ -20,7 +20,8 @@ stella_dev fix/late-wind-release (elem_ej_wind_total, type_ia_yields per Z); old
   set by hand ([Ni/Fe] +0.53 per event).
 - PARSEC v2 SN (CCSN, PPISN, PISN): the explosive part comes from the raw total and wind files of the same model
   (total - wind) instead of total net minus a wind net built with the track's wind mass (49 cells went negative and were
-  clipped). Elements a source destroys (AGB, PARSEC v2 wind and explosion) leave as the source's destroyed fraction of
+  clipped); explosive part of the model's own mass M_fin - M_bar, the extra envelope of a heavier track at birth
+  composition. Elements a source destroys (AGB, PARSEC v2 wind and explosion) leave as the source's destroyed fraction of
   the star's birth content, produced mass is added; H closes the mass (the transfer is recorded per source:
   AGB KL16 1.1 %, K2010 0.17 %, PARSEC v2 SN 2.5 %, wind 0.9 % of the ejecta at most; the PARSEC v2 models are born with
   Y = 0.249-0.302, the table with solar He at every Z). Raw elements with exactly 0 in a PARSEC v2 explosion stay 0.
@@ -40,7 +41,7 @@ stella_dev fix/late-wind-release (elem_ej_wind_total, type_ia_yields per Z); old
 - IMF ratios (Kroupa, M >= 8): [Ni/Fe] -0.03/-0.03/+0.04/+0.11 at Z = 1e-4/1e-3/6e-3/0.014 (was +0.56/+0.82/+0.56/+0.80),
   [Mg/Fe] +0.37/+0.36/+0.36/+0.34 (was +0.11/+0.27/+0.16/+0.34). Whole population after 13.7 Gyr with Ia: [Ni/Fe]
   -0.13..+0.02 (was +0.42..+0.44 with W7), [Mn/Fe] -0.06/+0.01, [N/O] +0.11/+0.24 at Z = 6e-3/0.014.
-- Changes against e3a707a: elem_ej_SN_mass (8-14 Msun block; PARSEC v2 SN: up to 6.6 Msun H in the 200 Msun PISN at Z = 5e-4, a Z between PARSEC v2 nodes), elem_ej_AGB_mass
+- Changes against e3a707a: elem_ej_SN_mass (8-14 Msun block; PARSEC v2 SN: up to 5.5 Msun H in the 200 Msun PISN at Z = 2e-4, a Z between PARSEC v2 nodes), elem_ej_AGB_mass
   (up to 0.05 Msun), remnant_mass (8-14 Msun), M_current (last alive age), M_preSN (last bits), type_ia_yields (shape),
   phase transitions (142 entries), surface_abundances and elem_ej_wind_cumulative (late wind; destroyed-fraction rule:
   at Z = 0.04, 0.06, which take the Z = 0.03 PARSEC v2 model, the wind of a 350 Msun star keeps 2.7 instead of 5.7 Msun O

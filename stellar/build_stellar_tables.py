@@ -2599,17 +2599,17 @@ def load_parsec2_explosion(ejecta_dir):
 
 
 def _interp_p2_explosion(p2_expl, Z_p2, M, p2_Ms):
-    """explosive mass fractions and M_bar at mass M, bracketed as _interp_p2_yields: linear in M between the two
+    """explosive part per unit mass, M_bar and M_fin at mass M, bracketed as _interp_p2_yields: linear in M between the two
     neighbouring models when both explode with the same type, else the nearest model (None if it does not explode)"""
     if M <= p2_Ms[0] or M >= p2_Ms[-1]:
         d = p2_expl.get((Z_p2, p2_Ms[0] if M <= p2_Ms[0] else p2_Ms[-1]))
-        return None if d is None else (d[0], d[1])
+        return None if d is None else (d[0], d[1], d[2])
     j = int(np.searchsorted(p2_Ms, M)) - 1; f = (M - p2_Ms[j]) / (p2_Ms[j + 1] - p2_Ms[j])
     a, b = p2_expl.get((Z_p2, p2_Ms[j])), p2_expl.get((Z_p2, p2_Ms[j + 1]))
     if a is not None and b is not None and a[3] == b[3]:
-        return (1 - f) * a[0] + f * b[0], (1 - f) * a[1] + f * b[1]
+        return (1 - f) * a[0] + f * b[0], (1 - f) * a[1] + f * b[1], (1 - f) * a[2] + f * b[2]
     d = a if f < 0.5 else b
-    return None if d is None else (d[0], d[1])
+    return None if d is None else (d[0], d[1], d[2])
 
 
 def _interp_p2_yields(p2_ejecta, Z_p2, M, p2_Ms, init_comp):
@@ -2770,6 +2770,7 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
     agb_D = np.zeros((N_Z, N_M, N_ELEM))   # AGB destroyed fraction of the initially present mass (interpolated)
     sn_frac = np.full((N_Z, N_M, 3 * N_ELEM), np.nan)   # PARSEC v2 explosive part per unit mass (CCSN, PPISN, PISN)
     m_bar = np.full((N_Z, N_M), np.nan)             # PARSEC v2 baryonic remnant mass of those
+    m_fin = np.full((N_Z, N_M), np.nan)             # PARSEC v2 pre-SN mass of those
     # yield_src: 0=none, 1=Karakas_AGB, 2=Limongi25 (C&L 2018 Z ratios), 3=CL18(unused), 4=PARSEC_v2
 
     n_src = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
@@ -2847,7 +2848,7 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
                     ex = _interp_p2_explosion(p2_expl, Z_p2, M, p2_Ms)
                     if ex is None:
                         raise ValueError('PARSEC v2 Z=%g M=%g: type %d without an explosive model' % (Z_p2, M, p2_rem_type))
-                    sn_frac[iz, im], m_bar[iz, im] = ex
+                    sn_frac[iz, im], m_bar[iz, im], m_fin[iz, im] = ex
                 rem_mass[iz, im] = p2_rem_mass
 
                 # FSN/DBH: no explosion, yields stay zero (wind handled separately)
@@ -2882,7 +2883,7 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
     print(f"  Yield sources: Karakas={n_src[1]}, Limongi25={n_src[2]}, "
           f"CL18={n_src[3]}, PARSEC_v2={n_src[4]}, none={n_src[0]}")
 
-    return yields, wind_yields, rem_type, rem_mass, yield_src, sn_frac, m_bar, agb_P, agb_D
+    return yields, wind_yields, rem_type, rem_mass, yield_src, sn_frac, m_bar, m_fin, agb_P, agb_D
 
 
 def scale_yields_for_fallback(yields, rem_type, rem_mass, M_preSN, M_grid, yield_src=None):
@@ -3246,7 +3247,7 @@ def build_all(base_dir, output_file):
 
     # ── Build yield grid ──
     print("\nBuilding yield tables...", flush=True)
-    yields, wind_yields, rem_type, rem_mass, yield_src, sn_frac, m_bar, agb_P, agb_D = build_yield_grid(Z_grid, M_grid, base_dir)
+    yields, wind_yields, rem_type, rem_mass, yield_src, sn_frac, m_bar, m_fin, agb_P, agb_D = build_yield_grid(Z_grid, M_grid, base_dir)
 
     # ── Reclassify remnants using He/CO core masses from tracks ──
     print("  Reclassifying remnants with core masses...", flush=True)
@@ -3502,9 +3503,9 @@ def build_all(base_dir, output_file):
                 if rt in SN_TYPES and np.isfinite(m_bar[iz, im]):
                     # PARSEC v2: the raw explosive composition over M_preSN - M_bar, the gravitational-baryonic remnant
                     # difference at birth composition
-                    # the track's pre-SN mass can fall below the model's M_bar (interpolated masses): then all ejecta
-                    # are explosive; nothing if the remnant takes the whole star
-                    mx = min(max(Mp - m_bar[iz, im], 0.0), max(Mp - rm, 0.0)); mb = max(Mp - rm, 0.0) - mx
+                    # explosive part of the model's own mass M_fin - M_bar; a heavier track keeps the extra envelope at
+                    # birth composition, a lighter one scales the explosive part down (to 0 if the remnant takes it all)
+                    mx = min(max(min(Mp, m_fin[iz, im]) - m_bar[iz, im], 0.0), max(Mp - rm, 0.0)); mb = max(Mp - rm, 0.0) - mx
                     n_p2_short += Mp < m_bar[iz, im]
                     P, D, A = sn_frac[iz, im, :N_ELEM], sn_frac[iz, im, N_ELEM:2 * N_ELEM], sn_frac[iz, im, 2 * N_ELEM:]
                     # produced mass plus the model's destroyed fraction of this star's birth content; H (fuel) closes

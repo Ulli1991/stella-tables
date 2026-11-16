@@ -183,7 +183,7 @@ def lifetime_budget_wind_plus_sn(t, w, root):
         x0 = np.array([xw[e] for e in ELEMS]); Wp = M - float(wr['Mfin'])
         W = M - float(t['M_preSN'][iz, im])
         rw = np.array([wel_[e] / Wp for e in ELEMS]) - x0
-        Ex = np.array([tel[e] - wel_[e] for e in ELEMS]); mx = float(t['M_preSN'][iz, im]) - float(tr['Mbar'])
+        Ex = np.array([tel[e] - wel_[e] for e in ELEMS]); mx = min(float(t['M_preSN'][iz, im]), float(tr['Mfin'])) - float(tr['Mbar'])
         rx = Ex / Ex.sum() - x0
         tf = lambda r: np.where(r < 0, np.where(x0 > 0, r / np.where(x0 > 0, x0, 1.0), 0.0) * X[iz], r)
         want = tf(rw) * W + tf(rx) * mx

@@ -214,7 +214,8 @@ def parsec2_sn_is_raw_explosion(t, w, root):
     """SN ejecta (CCSN, PPISN, PISN) at PARSEC v2 grid points from the raw explosive part (total - wind file; an isotope
     unfilled in the wind file only: the total holds the explosion part; unfilled in both: initial fraction): per unit
     explosive mass r = x - X_PARSEC,init; ejecta = X_init (M_preSN - M_rem) + (max(r, 0) - X_init max(-r, 0) / X_PARSEC,init)
-    (M_preSN - M_bar), H the rest (explosive mass capped at M_preSN - M_rem); rel 1e-9"""
+    (min(M_preSN, M_fin) - M_bar), H the rest (explosive mass capped at M_preSN - M_rem; extra envelope of a heavier
+    track at birth composition); rel 1e-9"""
     Zt, Mt, rt, rm, Mp = t['Z'][()], t['M_init'][()], t['remnant_type'][()], t['remnant_mass'][()], t['M_preSN'][()]
     SN, X = t['elem_ej_SN_mass'][()], t['X_init'][()]
     worst, n = (0., None), 0
@@ -243,7 +244,7 @@ def parsec2_sn_is_raw_explosion(t, w, root):
                 if e in ELEMS: X0[ELEMS.index(e)] += x
             r = E / E.sum() - X0
             Pp, Dd = np.maximum(r, 0.0), np.where((r < 0) & (X0 > 0), -r / np.where(X0 > 0, X0, 1.0), 0.0)
-            mx = min(max(Mp[iz, im] - Mbar, 0.0), Mp[iz, im] - rm[iz, im]); mb = Mp[iz, im] - rm[iz, im] - mx
+            mx = min(max(min(Mp[iz, im], Mfin) - Mbar, 0.0), Mp[iz, im] - rm[iz, im]); mb = Mp[iz, im] - rm[iz, im] - mx
             want = X[iz] * (mx + mb) + (Pp - Dd * X[iz]) * mx
             want[0] = Mp[iz, im] - rm[iz, im] - want[1:].sum()
             d = np.abs(SN[iz, im] - want) / (np.maximum(want, 0.0) + 1e-12 * M); n += 1
