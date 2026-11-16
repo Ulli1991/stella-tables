@@ -222,6 +222,7 @@ recorded origin. Both are checksum-locked and sanity-checked, not regenerated.
 | `tests/stellar/test_wind_composition.py` | BoOST isotope columns vs `fdat-columns.txt`; end-of-wind element masses = PARSEC v2 wind ejecta enrichment for all 27 elements; Na/Al wind enrichment of massive stars; per-star wind + SN element budget = PARSEC v2 lifetime net yield (raw inputs from `BUILD_DIR/data_root`) |
 | `tests/stellar/test_yields_raw.py` | pre-SN mass = raw PARSEC v2 track final mass; ZAMS surface = X_init; K2010 Z = 1e-4 6 Msun = VW93 model; KL16 unprocessed elements follow the raw production factors; Limongi+2025 lifetime budget at solar Z (raw inputs from `BUILD_DIR/data_root`) |
 | `tests/stellar/test_solar.py` | A09 transcription reproduces A09's Z and Z/X, pattern sums, table X_init = pattern x Z/0.014, GIZMO `init.cc` array equals the generator (`--gizmo`) |
+| `tests/stellar/test_radiation.py` | blackbody band integrals, radiation-source label, L_bol time integrals vs raw tracks, O-star Q(H), Q(HeI) vs Martins+05, lifetime photon budgets vs PARSEC v2 photon tables |
 | `tests/chemistry/test_chemistry.py` | checksums, eh2 physics (1.5T at low T, c_v bounds, glitch row, seam), energy table regenerates byte for byte, layout, x = 0 block exact, gamma bounds, monotonicity, new vs original table |
 | `tests/chemistry/run_lookup_test.py` | built and original energy tables through GIZMO's Fortran `calc_temp.F` and the C++ port: T round trip to 2e-3 for abhe 0 / 0.079 / 0.1 / 0.12, backends agree, original and new identical off the seam |
 
@@ -237,3 +238,6 @@ Expected failures (XFAIL) are listed in the test output with their reason and do
   8-14 Msun stars.
 * Q(He+) of massive stars differs from the PARSEC v2 photon tables by up to 3 dex in either direction (different
   atmospheres; the literature spread is orders of magnitude), printed by `tests/stellar/test_radiation.py`.
+* Late-O stars (28-34 kK): Q(H) and Q(HeI) are 0.2-0.5 dex above the PARSEC v2 photon tables (WM-basic), and agree
+  with Martins+05 (CMFGEN), TLUSTY and PoWR (test `ostar_rates_vs_martins05`). Lifetime Q(H) of 14-24 Msun stars at
+  Z >= 0.004 is therefore 0.1-0.5 dex above PARSEC v2's.
