@@ -131,39 +131,36 @@ def test_grid_point_exactness(T):
 
 # ── invariant 5: Σ cum_wind monotonic in log_age ────────────────────────
 
-def _lifetime_steps(T):
-    """(NZ, NM, NAGE-1) mask of the age steps a living star is interpolated on: up to the first grid age after death
-    (that node anchors the interpolation to the death age; GIZMO clamps the age at lifetime_yr)"""
-    ok = np.zeros(T.M_current.shape[:2] + (T.M_current.shape[2] - 1,), dtype=bool)
-    for iz in range(ok.shape[0]):
-        for im in range(ok.shape[1]):
+def test_wind_total_dataset(T):
+    """elem_ej_wind_total (all wind, out at lifetime_yr) = the cumulative wind at every grid age after death, per
+    element, and = M_init - M_preSN in total"""
+    if T.cum_wind is None or T.wind_total is None:
+        return False, "elem_ej_wind_total missing"
+    worst = 0.0
+    for iz in range(T.M_current.shape[0]):
+        for im in range(T.M_current.shape[1]):
             ia = np.where(T.M_current[iz, im] > 0)[0]
-            ok[iz, im, :ia[-1] + 1 if ia.size else ok.shape[2]] = True
-    return ok
-
-
-def _cum_wind_at_death(T):
-    """(NZ, NM) Σ cum_wind at lifetime_yr, linear in log age between grid ages, as GIZMO evaluates it"""
-    out = np.zeros(T.lifetime.shape)
-    sum_cw = T.cum_wind.sum(axis=3).astype(np.float64)
-    for iz in range(out.shape[0]):
-        for im in range(out.shape[1]):
-            x = np.log10(max(T.lifetime[iz, im], 100.0))
-            i = int(np.clip(np.searchsorted(T.log_age, x, side="right") - 1, 0, len(T.log_age) - 2))
-            f = float(np.clip((x - T.log_age[i]) / (T.log_age[i + 1] - T.log_age[i]), 0, 1))
-            out[iz, im] = sum_cw[iz, im, i] * (1 - f) + sum_cw[iz, im, i + 1] * f
-    return out
+            if not ia.size: continue
+            post = T.cum_wind[iz, im, ia[-1] + 1:, :].astype(np.float64)
+            if post.size:
+                worst = max(worst, float(np.max(np.abs(post - T.wind_total[iz, im][None, :]))))
+    tot = np.abs(T.wind_total.sum(axis=2) - (T.M_init[None, :] - T.M_preSN)) / T.M_init[None, :]
+    return (worst == 0.0 and float(tot.max()) < PHYS_TOL,
+            f"max |cum_wind(after death) - total| = {worst:.2e}; max |Σ total - (M_init-M_preSN)|/M_init = {tot.max():.2e}")
 
 
 def test_cum_wind_at_death(T):
-    """all wind mass is out exactly when the star dies: Σ cum_wind(lifetime_yr) = M_init - M_preSN"""
-    if T.cum_wind is None:
-        return True, "cum_wind data not present — skipped"
-    diff = _cum_wind_at_death(T) - (T.M_init[None, :] - T.M_preSN)
-    rel = np.abs(diff) / T.M_init[None, :]
-    iz, im = np.unravel_index(int(np.argmax(rel)), rel.shape)
-    return (float(rel.max()) < PHYS_TOL,
-            f"max |Σcum_wind(lifetime) - (M_init-M_preSN)| / M_init = {rel.max():.2e} at M = {T.M_init[im]}")
+    """GIZMO's lookup at lifetime_yr gives the total, at the last alive grid age the track's loss so far"""
+    if T.cum_wind is None or T.wind_total is None:
+        return False, "elem_ej_wind_total missing"
+    worst = 0.0
+    for iz in range(T.M_current.shape[0]):
+        for im in range(T.M_current.shape[1]):
+            lt = T.lifetime[iz, im]
+            for k in range(T.NELEM):
+                v = T._cum_wind_corner(iz, im, np.log10(lt), k)
+                worst = max(worst, abs(v - T.wind_total[iz, im, k]) / T.M_init[im])
+    return worst < 1e-12, f"max |cum_wind(lifetime) - total| / M_init = {worst:.2e}"
 
 
 def test_cum_wind_monotonic_total(T):
@@ -171,7 +168,7 @@ def test_cum_wind_monotonic_total(T):
         return True, "cum_wind data not present — skipped"
     sum_cw = T.cum_wind.sum(axis=3)  # (NZ, NM, NAGE)
     diffs = np.diff(sum_cw, axis=2)
-    bad_count = int(np.sum((diffs < -1e-10) & _lifetime_steps(T)))
+    bad_count = int(np.sum(diffs < -1e-10))
     if bad_count == 0:
         return True, "Σ cum_wind is non-decreasing in age (all grid samples)"
     min_diff = float(diffs.min())
@@ -197,7 +194,7 @@ def test_cum_wind_per_elem_monotonic(T):
     if T.cum_wind is None:
         return True, "cum_wind data not present — skipped"
     diffs = np.diff(T.cum_wind, axis=2)  # (NZ, NM, NAGE-1, NELEM)
-    bad = int(np.sum((diffs < -1e-10) & _lifetime_steps(T)[..., None]))
+    bad = int(np.sum(diffs < -1e-10))
     if bad == 0:
         return True, "per-element cum_wind non-decreasing"
     min_diff = float(diffs.min())
@@ -281,7 +278,8 @@ TESTS = [
     ("4.  grid-point round-trip",      test_grid_point_exactness),
     ("5.  Σ cum_wind monotonic",       test_cum_wind_monotonic_total),
     ("6.  cum_wind endpoint",          test_cum_wind_endpoint),
-    ("6b. cum_wind at death",          test_cum_wind_at_death),
+    ("6b. wind total dataset",         test_wind_total_dataset),
+    ("6c. cum_wind at death",          test_cum_wind_at_death),
     ("7.  per-elem cum_wind mono",     test_cum_wind_per_elem_monotonic),
     ("8.  M_current + wind ledger",    test_M_current_plus_wind_ledger),
     ("9.  elem_ej_SN ≥ 0",             test_elem_SN_nonneg),

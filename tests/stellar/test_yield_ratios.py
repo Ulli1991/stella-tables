@@ -22,7 +22,7 @@ Bands (stated before running; widths cover the spread between studies and NLTE c
                            metal-poor HII regions, log N/O ~ -1.5 ([N/O] ~ -0.65, Izotov & Thuan 99, ApJ 511, 639),
                            is an upper bound for them
   whole population after 13.7 Gyr (all stars with lifetime < 13.7 Gyr + 1.3e-3 SN Ia per Msun formed, Maoz & Graur
-  17, ApJ 848, 25, with the table's W7 vector), Z = 6e-3 and 0.014 -- near-solar disc stars (Bensby+14, A&A 562, A71;
+  17, ApJ 848, 25, with the table's Ia vector at that Z), Z = 6e-3 and 0.014 -- near-solar disc stars (Bensby+14, A&A 562, A71;
   Battistini & Bensby 15, A&A 577, A9 for Mn):
     [O/Fe], [Mg/Fe], [Si/Fe] -0.20..+0.40;  [Ni/Fe] -0.25..+0.25;  [Mn/Fe] -0.50..+0.15;  [N/O] -0.50..+0.40
   whole population, Z = 1e-4 and 1e-3:  [Ni/Fe] -0.30..+0.30;  [N/O] -1.50..+0.50 (Izotov & Thuan 99 plateau, AGB
@@ -150,7 +150,8 @@ def imf_population_ratios(T):
     [Ni/Fe] and [N/O] at Z = 1e-4, 1e-3"""
     S = solar(); rows = []
     for Z, bands in ((1e-4, POP_BANDS_LO), (1e-3, POP_BANDS_LO), (6e-3, POP_BANDS_HI), (0.014, POP_BANDS_HI)):
-        y = imf_integral(T, T.iz(Z), lambda m, lt: lt < 1.37e10) + N_IA * T.ia
+        ia = T.ia[T.iz(Z)] if T.ia.ndim == 2 else T.ia
+        y = imf_integral(T, T.iz(Z), lambda m, lt: lt < 1.37e10) + N_IA * ia
         rows += [(Z, '[%s/%s]' % (a, b), bracket(y, S, a, b), lo, hi) for a, b, lo, hi in bands]
     return check_bands(rows)
 

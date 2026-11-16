@@ -1,0 +1,21 @@
+Type Ia yields: sub-Chandrasekhar double detonations of Gronow et al. 2021, Model M10_03 (1.0 Msun CO core, 0.03 Msun
+He shell), He-shell and core detonation summed, asymptotic (decayed) stable nuclides.
+
+gronow21a_appendix_table_stable.tex   Gronow, Collins, Ohlmann, Pakmor, Kromer, Seitenzahl, Sim & Roepke 2021, A&A 649,
+                                      A155 (arXiv:2102.06719), appendix "Asymptotic nucleosynthesis yields": solar
+                                      metallicity (M10_03 = M10_03_1)
+gronow21b_appendix_table_stable.tex   Gronow, Cote, Lach, Seitenzahl, Collins, Sim & Roepke 2021, A&A 656, A94
+                                      (arXiv:2103.14050), appendix: 0.01, 0.1 and 3 Zsun
+
+Both verbatim from the arXiv e-print sources (file appendix_table_stable.tex in each; renamed here), downloaded
+2026-11-16. e-print sha256: 2102.06719 fde9b6e15fbdae5b2f60beaf0b73bb54efdb7b6147a800a40bcfcc0b03136aaf,
+2103.14050 aef8e43466b96d4aade8a662329ec80f06ddc7e2ecd0c881553c866226a0fc58.
+sha256: gronow21a_appendix_table_stable.tex 476d4ed5a7a31b06d93bb3489f4b57487ef7a85335589f720ea02fdd32ffb4ae
+        gronow21b_appendix_table_stable.tex cab0eb2affcf7ad8e6139604726785d27417b9080945c5dd655d818aa725812b
+
+Why M10_03: Gronow+21a (discussion of the shell masses) name only the thin-shell models M08_03, M09_03, M10_03 and M10_02 as candidates for
+normal SNe Ia (observations disfavour 56Ni and Ti, Cr in the shell ejecta); of these M10_03 has the 1.0 Msun core
+(56Ni 0.59 Msun, Table in gronow21a "select radioactive nuclides"). Gronow+21b: M10_03 fits the solar Ti, V, Cr ratios
+at all metallicities; its [Mn/Fe] is below solar except at 3 Zsun. Sub-Chandrasekhar explosions are favoured by the Mn
+and Ni abundances of dwarf galaxies (Kirby+19, ApJ 881, 45; de los Reyes+20, ApJ 891, 85). Per event at Z_sun:
+[Ni/Fe] -0.04, [Mn/Fe] -0.09 (M10_05: -0.02, -0.03; the near-Chandrasekhar Seitenzahl+13 N100: +0.26, +0.18).

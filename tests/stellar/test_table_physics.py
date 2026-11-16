@@ -14,7 +14,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(os.path.dirname(os.path.dirname(HERE)), 'build')
 ELEMS = ['H', 'He', 'C', 'N', 'O', 'F', 'Ne', 'Na', 'Mg', 'Al', 'Si', 'P', 'S', 'Cl', 'Ar', 'K',
          'Ca', 'Sc', 'Ti', 'V', 'Cr', 'Mn', 'Fe', 'Co', 'Ni', 'Cu', 'Zn']
-IA_EJECTA_MASS = 1.378          # GIZMO resolvedism_fb_shared.h
 # datasets GIZMO's loader opens by name (grep of resolvedism_stellar_tables.cc)
 LOADER_DATASETS = ['M_CO_core', 'M_He_core', 'M_current', 'M_init', 'M_preSN', 'X_init', 'Z',
                    'elem_ej_AGB_mass', 'elem_ej_SN_mass', 'lifetime_yr', 'logR_cm', 'log_L_FUV',
@@ -70,14 +69,6 @@ def finite_everywhere(t):
             bad.append((n, int((~np.isfinite(o[()])).sum())))
     t.f.visititems(v)
     return not bad, f'nonfinite={bad}'
-
-@test
-def ia_yields_w7(t):
-    """Type Ia: H=He=0, sum = IA_EJECTA_MASS, Fe=0.744 and Ni~0.14 (Iwamoto+99 W7)"""
-    y = t['type_ia_yields']; d = dict(zip(ELEMS, y))
-    ok = (d['H'] == 0 and d['He'] == 0 and abs(y.sum() - IA_EJECTA_MASS) < 1e-6
-          and abs(d['Fe'] - 0.744) < 1e-6 and 0.12 < d['Ni'] < 0.16 and np.all(y >= 0))
-    return ok, f"sum={y.sum():.6f} Fe={d['Fe']} Ni={d['Ni']:.4f} Si={d['Si']} S={d['S']}"
 
 @test
 def lifetime_monotonic_in_mass(t):

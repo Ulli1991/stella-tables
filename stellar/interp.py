@@ -56,8 +56,10 @@ class StellarTable:
                         break
                 else:
                     self.cum_wind = None
+                self.wind_total = f["elem_ej_wind_total"][...].astype(np.float64) if "elem_ej_wind_total" in f else None
         except FileNotFoundError:
             self.cum_wind = None
+            self.wind_total = None
 
     # ── factors for (logM, logZ) ───────────────────────────────────────
     def _bl_factors(self, lm, lz):
@@ -154,20 +156,26 @@ class StellarTable:
     def m_current(self, lm, lz, la):
         return self._trilinear(self.M_current, lm, lz, la)
 
+    def _cum_wind_corner(self, jz, jm, la, k):
+        """cumulative wind of one (Z, M) grid star at log age la, as GIZMO's lookup: age clamped at lifetime_yr;
+        between the last grid age before death and death, linear in log age up to the total (elem_ej_wind_total)"""
+        lt = self.lifetime[jz, jm]
+        llt = np.log10(lt) if lt > 0 else self.log_age[-1]
+        lac = min(la, llt)
+        ia = int(np.clip(np.searchsorted(self.log_age, lac, side="right") - 1, 0, self.NAGE - 2))
+        c0 = float(self.cum_wind[jz, jm, ia, k])
+        if self.wind_total is not None and self.log_age[ia + 1] > llt and llt > self.log_age[ia]:
+            return c0 + (self.wind_total[jz, jm, k] - c0) * max(0.0, lac - self.log_age[ia]) / (llt - self.log_age[ia])
+        fa = min(1.0, max(0.0, (lac - self.log_age[ia]) / (self.log_age[ia + 1] - self.log_age[ia])))
+        return c0 * (1 - fa) + float(self.cum_wind[jz, jm, ia + 1, k]) * fa
+
     def cum_wind_per_elem(self, lm, lz, la, k):
-        """as GIZMO's stellar_elem_ej_wind_cumulative: each (Z, M) corner's age is clamped at its own lifetime_yr"""
+        """as GIZMO's stellar_elem_ej_wind_cumulative: bilinear in (log M, log Z) over the corner stars"""
         if self.cum_wind is None:
             return 0.0
         im, iz, fm, fz = self._bl_factors(lm, lz)
-        out = 0.0
-        for jz, wz in ((iz, 1 - fz), (iz + 1, fz)):
-            for jm, wm in ((im, 1 - fm), (im + 1, fm)):
-                lt = self.lifetime[jz, jm]
-                lac = np.log10(lt) if (lt > 0 and 10.0 ** la > lt) else la
-                ia = int(np.clip(np.searchsorted(self.log_age, lac) - 1, 0, self.NAGE - 2))
-                fa = min(1.0, max(0.0, (lac - self.log_age[ia]) / (self.log_age[ia + 1] - self.log_age[ia])))
-                out += wz * wm * (self.cum_wind[jz, jm, ia, k] * (1 - fa) + self.cum_wind[jz, jm, ia + 1, k] * fa)
-        return out
+        return sum(wz * wm * self._cum_wind_corner(jz, jm, la, k)
+                   for jz, wz in ((iz, 1 - fz), (iz + 1, fz)) for jm, wm in ((im, 1 - fm), (im + 1, fm)))
 
     def cum_wind_total(self, lm, lz, la):
         if self.cum_wind is None:

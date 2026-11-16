@@ -167,6 +167,91 @@ def remnant_type_is_raw_parsec2_fate(t, w, root):
     return n > 0 and not bad, '%d grid points; mismatches (Z, M, table, raw): %s' % (n, bad[:6])
 
 
+def _gronow_table(path, label):
+    """{(elem, A): [values]} of the stable-yield table whose caption contains label (rows up to the next table)"""
+    L = open(path).read().splitlines(); i = next(k for k, l in enumerate(L) if label in l and '\\caption{' in l)
+    rows = {}
+    for l in L[i + 1:]:
+        if '\\caption{' in l: break
+        m = re.match(r'\$\^\{(\d+)\}\$([A-Za-z]+)\s*&(.*)\\\\', l.strip())
+        if m: rows[(m.group(2), int(m.group(1)))] = [float(x) for x in m.group(3).split('&')]
+    return rows
+
+
+@test
+def ia_yields_are_gronow21_m10_03(t, w, root):
+    """type_ia_yields[Z] = Gronow+2021 M10_03 (He + core detonation, stable nuclides) per element, linear in log Z
+    between 0.01, 0.1, 1 (Gronow+21a) and 3 Zsun (Gronow+21b), clamped outside; relative 1e-12"""
+    d = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'stellar', 'data', 'yields', 'gronow2021')
+    a = _gronow_table(os.path.join(d, 'gronow21a_appendix_table_stable.tex'), 'Models M10\\_10, M010\\_05')
+    b = _gronow_table(os.path.join(d, 'gronow21b_appendix_table_stable.tex'), 'Model M10\\_03 with 0.01')
+    def vec(rows, pair):
+        v = np.zeros(len(ELEMS))
+        for (e, A), x in rows.items():
+            if e in ELEMS: v[ELEMS.index(e)] += x[2 * pair] + x[2 * pair + 1]
+        return v
+    nodes = np.log10([0.01, 0.1, 1.0, 3.0]); V = [vec(b, 0), vec(b, 1), vec(a, 2), vec(b, 2)]
+    y = t['type_ia_yields'][()]
+    if y.ndim != 2: return False, 'type_ia_yields has shape %s, expected (N_Z, %d)' % (y.shape, len(ELEMS))
+    worst = (0., None)
+    for iz, Z in enumerate(t['Z'][()]):
+        x = float(np.clip(np.log10(Z / 0.014), nodes[0], nodes[-1]))
+        want = np.array([np.interp(x, nodes, [v[k] for v in V]) for k in range(len(ELEMS))])
+        e = np.max(np.abs(y[iz] - want) / np.maximum(want, 1e-30))
+        if e > worst[0]: worst = (e, (Z, ELEMS[int(np.argmax(np.abs(y[iz] - want) / np.maximum(want, 1e-30)))]))
+    return worst[0] < 1e-12, 'max rel |table - Gronow M10_03| = %.2e at (Z, elem) = %s; sum at Z_sun %.4f Msun' % (
+        worst[0], worst[1], y[int(np.argmin(abs(t['Z'][()] - 0.014)))].sum())
+
+
+def _p2_rows(path, first):
+    L = open(path).read().splitlines(); names = L[3].split()[first:]
+    tok = L[1].replace('#', '').split(); x0 = [float(v) for v in tok[-len(names):]]
+    return names, x0, {float(l.split()[0]): l.split() for l in L[4:] if len(l.split()) >= first + len(names)}
+
+
+@test
+def parsec2_sn_is_raw_explosion(t, w, root):
+    """SN ejecta (CCSN, PPISN, PISN) at PARSEC v2 grid points = the raw explosive part (total - wind file; an isotope
+    unfilled in the wind file only: the total holds the explosion part; unfilled in both: initial fraction) as mass
+    fractions times the explosive ejecta M_preSN - M_bar, plus the birth composition times M_bar - M_rem; rel 1e-9"""
+    Zt, Mt, rt, rm, Mp = t['Z'][()], t['M_init'][()], t['remnant_type'][()], t['remnant_mass'][()], t['M_preSN'][()]
+    SN, X = t['elem_ej_SN_mass'][()], t['X_init'][()]
+    worst, n = (0., None), 0
+    for zd in glob(os.path.join(root, 'parsec2_vms', 'ejecta_Z*')):
+        Zp = float(re.search(r'ejecta_Z([\d.Ee-]+)', zd).group(1)); iz = np.where(np.isclose(Zt, Zp, rtol=1e-9))[0]
+        if not iz.size: continue
+        iz = iz[0]
+        nt, x0, tot = _p2_rows(glob(os.path.join(zd, '*total_ejecta.dat'))[0], 7)
+        nw, _, wnd = _p2_rows(glob(os.path.join(zd, '*winds_ejecta.dat'))[0], 4)
+        for M, p in tot.items():
+            im = np.where(Mt == M)[0]
+            if not im.size or rt[iz, im[0]] not in (2, 4, 5) or M not in wnd: continue
+            im = im[0]; Mfin, Mrem, Mbar = float(p[1]), float(p[4]), float(p[5])
+            E = np.zeros(len(ELEMS))
+            for j, (nm, x) in enumerate(zip(nt, x0)):
+                e = {'AL26': 'Mg'}.get(nm, re.match(r'[A-Z]+', nm).group(0).capitalize())
+                if e not in ELEMS: continue
+                vt, vw = float(p[7 + j]), float(wnd[M][4 + j])
+                if vt == 0.0 and x > 0: v = x * (Mfin - Mbar)          # unfilled in both
+                elif vw == 0.0 and x > 0: v = vt                      # total holds the explosion part only
+                else: v = vt - vw
+                E[ELEMS.index(e)] += v
+            want = E / E.sum() * (Mp[iz, im] - Mbar) + X[iz] * (Mbar - rm[iz, im])
+            e = np.max(np.abs(SN[iz, im] - want) / np.maximum(want, 1e-12 * M)); n += 1
+            if e > worst[0]: worst = (e, (Zp, M, ELEMS[int(np.argmax(np.abs(SN[iz, im] - want) / np.maximum(want, 1e-12 * M)))]))
+    return n > 0 and worst[0] < 1e-9, '%d PARSEC v2 SN models; worst rel |table - raw explosion| = %.2e at (Z, M, elem) = %s' % (n, worst[0], worst[1])
+
+
+@test
+def closure_residuals_at_roundoff(t, w, root):
+    """mass booked to H to close each star's ejecta (before the closure: |sum of ejecta - ejected mass| / M_init,
+    recorded by the builder per source) is round-off for every source"""
+    keys = [k for k in t.attrs if k.startswith('closure_residual_')]
+    if not keys: return False, 'no closure_residual_* attributes'
+    vals = {k[len('closure_residual_'):]: float(t.attrs[k]) for k in keys}
+    return all(v < 1e-12 for v in vals.values()), ', '.join('%s %.2e' % kv for kv in sorted(vals.items()))
+
+
 @test
 def yield_source_mass_ranges_stated(t, w, root):
     src = str(t.attrs.get('yield_sources', ''))
