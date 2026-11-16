@@ -183,7 +183,7 @@ def test_cum_wind_monotonic_total(T):
 def test_cum_wind_endpoint(T):
     if T.cum_wind is None:
         return True, "cum_wind data not present — skipped"
-    sum_cw_end = T.cum_wind[:, :, -1, :].sum(axis=2)  # (NZ, NM)
+    sum_cw_end = T.cum_wind[:, :, -1, :].astype(np.float64).sum(axis=2)  # (NZ, NM), double as GIZMO sums
     expected   = T.M_init[None, :] - T.M_preSN
     diff = sum_cw_end - expected
     worst = float(np.max(np.abs(diff)))

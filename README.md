@@ -68,7 +68,7 @@ with `--gizmo` also GIZMO's own hash entries and files. GIZMO-side changes (hash
 stellar/                      table builder and helpers
   data/reduced/*.tar.xz       track catalogues cut down to what the builder reads (see below)
   data/reduced/MANIFEST.txt   sha256 of every raw file the builder reads; names of the files it only lists
-  data/yields/                Chieffi & Limongi 2018, Karakas 2010, Karakas & Lugaro 2016, NuGrid
+  data/yields/                Chieffi & Limongi 2018, Karakas 2010, Karakas & Lugaro 2016, Limongi+2025 (Table 2), NuGrid
   data/lut/spectral_band_lut.hdf5   band-energy fractions (stellar/build_spectral_lut.py)
 chemistry/
   make_energy_table.py        SGCHEM energy -> (T, gamma) table from eh2-table.txt

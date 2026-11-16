@@ -16,7 +16,8 @@ Bands (stated before running; widths cover the spread between studies and NLTE c
     [Mg/Fe] +0.15..+0.65   Cayrel+04 <[Mg/Fe]> = +0.27 (LTE); Andrievsky+10 (A&A 509, A88) NLTE ~+0.6
     [Si/Fe] +0.15..+0.65   Cayrel+04 ~+0.37
     [Ni/Fe] -0.30..+0.30   Cayrel+04 ~-0.05
-    [Mn/Fe] -0.70..+0.00   Cayrel+04 ~-0.4 (LTE); Bergemann & Gehren 08 (A&A 492, 823) NLTE ~-0.1..-0.3
+    [Mn/Fe] -0.70..+0.00   at Z <= 1e-3 only (odd-Z, rises with Z; the sources give ~+0.15 at Z_sun):
+                           Cayrel+04 ~-0.4 (LTE); Bergemann & Gehren 08 (A&A 492, 823) NLTE ~-0.1..-0.3
     [N/O]   -3.50..-0.50   at Z <= 1e-3 only: non-rotating massive stars make secondary N; the primary-N plateau of
                            metal-poor HII regions, log N/O ~ -1.5 ([N/O] ~ -0.65, Izotov & Thuan 99, ApJ 511, 639),
                            is an upper bound for them
@@ -123,8 +124,7 @@ def check_bands(rows):
 
 # ── IMF-integrated ratios ─────────────────────────────────────────────
 
-CC_BANDS = [('O', 'Fe', 0.25, 0.80), ('Mg', 'Fe', 0.15, 0.65), ('Si', 'Fe', 0.15, 0.65), ('Ni', 'Fe', -0.30, 0.30),
-            ('Mn', 'Fe', -0.70, 0.00)]
+CC_BANDS = [('O', 'Fe', 0.25, 0.80), ('Mg', 'Fe', 0.15, 0.65), ('Si', 'Fe', 0.15, 0.65), ('Ni', 'Fe', -0.30, 0.30)]
 POP_BANDS_HI = [('O', 'Fe', -0.20, 0.40), ('Mg', 'Fe', -0.20, 0.40), ('Si', 'Fe', -0.20, 0.40),
                 ('Ni', 'Fe', -0.25, 0.25), ('Mn', 'Fe', -0.50, 0.15), ('N', 'O', -0.50, 0.40)]
 POP_BANDS_LO = [('Ni', 'Fe', -0.30, 0.30), ('N', 'O', -1.50, 0.50)]
@@ -132,13 +132,15 @@ POP_BANDS_LO = [('Ni', 'Fe', -0.30, 0.30), ('N', 'O', -1.50, 0.50)]
 
 @test
 def imf_massive_star_ratios(T):
-    """massive stars (M >= 8: winds + CCSN): [O/Fe] [Mg/Fe] [Si/Fe] [Ni/Fe] [Mn/Fe] in the halo-plateau bands at
-    Z = 1e-4, 1e-3, 6e-3, 0.014; [N/O] at Z <= 1e-3 below the primary-N plateau"""
+    """massive stars (M >= 8: winds + CCSN): [O/Fe] [Mg/Fe] [Si/Fe] [Ni/Fe] in the halo-plateau bands at
+    Z = 1e-4, 1e-3, 6e-3, 0.014; [Mn/Fe] and [N/O] (below the primary-N plateau) at Z <= 1e-3"""
     S = solar(); rows = []
     for Z in (1e-4, 1e-3, 6e-3, 0.014):
         y = imf_integral(T, T.iz(Z), lambda m, lt: m >= 8.0)
         rows += [(Z, '[%s/%s]' % (a, b), bracket(y, S, a, b), lo, hi) for a, b, lo, hi in CC_BANDS]
-        if Z <= 1e-3: rows.append((Z, '[N/O]', bracket(y, S, 'N', 'O'), -3.5, -0.5))
+        if Z <= 1e-3:   # the halo-star bands of Mn (odd-Z, metallicity dependent) and N apply at low Z only
+            rows.append((Z, '[Mn/Fe]', bracket(y, S, 'Mn', 'Fe'), -0.7, 0.0))
+            rows.append((Z, '[N/O]', bracket(y, S, 'N', 'O'), -3.5, -0.5))
     return check_bands(rows)
 
 
@@ -266,11 +268,20 @@ def limongi25_remnant_is_paper_mass_cut(T):
 
 def parsec2_raw_net(root, Z, M):
     """{elem: net} of the raw PARSEC v2 total-ejecta row (Z, M) against the file's initial composition, ejecta =
-    M - M_bar; elements with an unfilled (exactly 0) column are left out"""
+    M - M_bar; elements with an unfilled (exactly 0) column in the total or the wind file are left out"""
     d = os.path.join(root, 'parsec2_vms')
     zdir = [p for p in os.listdir(d) if p.startswith('ejecta_Z') and np.isclose(float(p[8:]), Z, rtol=1e-9)]
     if not zdir: return None
     f = [p for p in os.listdir(os.path.join(d, zdir[0])) if p.endswith('total_ejecta.dat')][0]
+    fw = [p for p in os.listdir(os.path.join(d, zdir[0])) if p.endswith('winds_ejecta.dat')]
+    wind0 = set()   # wind-file columns that are exactly 0 although present at birth: unfilled there too
+    if fw:
+        Lw = open(os.path.join(d, zdir[0], fw[0])).read().splitlines(); nw = Lw[3].split()[4:]
+        tw = Lw[1].replace('#', '').split(); xw = [float(v) for v in tw[-len(nw):]]
+        for ln in Lw[4:]:
+            p = ln.split()
+            if len(p) >= 4 + len(nw) and np.isclose(float(p[0]), M):
+                wind0 = {re.match(r'[A-Z]+', n).group(0).capitalize() for n, x, v in zip(nw, xw, p[4:]) if float(v) == 0.0 and x > 0}
     L = open(os.path.join(d, zdir[0], f)).read().splitlines()
     names = L[3].split()[7:]
     tok = L[1].replace('#', '').split(); x0 = [float(v) for v in tok[tok.index('SN') + 1:]]
@@ -283,7 +294,7 @@ def parsec2_raw_net(root, Z, M):
                 if e not in ELEMS: continue
                 if float(v) == 0.0 and x > 0: skip.add(e)
                 out[e] = out.get(e, 0.0) + float(v) - x * mej
-            return {e: v for e, v in out.items() if e not in skip}
+            return {e: v for e, v in out.items() if e not in skip | wind0}
     return None
 
 

@@ -22,7 +22,8 @@ repository's own fetch scripts and READMEs name.
   PARSEC v2.0 VMS tracks and ejecta     Source: https://stev.oapd.inaf.it/PARSEC/tracks_v2_VMS.html.
                                         Citation: Costa et al. 2025, arXiv:2501.12917. Terms: to be confirmed.
   BoOST                                 Szecsi et al., arXiv:2004.08203. Download location and terms: to be confirmed.
-  Chieffi & Limongi 2018, Karakas 2010, Karakas & Lugaro 2016, NuGrid (stellar/data/yields): published yields;
+  Chieffi & Limongi 2018, Karakas 2010, Karakas & Lugaro 2016, Limongi, Chieffi & Roberti 2025 (arXiv:2505.22030,
+                                        Table 2 from the arXiv source), NuGrid (stellar/data/yields): published yields;
                                         terms: to be confirmed.
   TLUSTY OSTAR2002 / BSTAR2006          Lanz & Hubeny 2003, ApJS 146, 417; 2007, ApJS 169, 83 (via the SVO theory server).
   PoWR                                  https://www.astro.physik.uni-potsdam.de/PoWR/; Hamann & Graefener 2004; Todt et

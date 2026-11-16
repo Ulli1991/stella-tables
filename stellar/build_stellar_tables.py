@@ -1543,10 +1543,14 @@ def _blend_tau(r_lo, r_hi, f, M_target=None):
     for key in pt_lo:
         v_lo = pt_lo[key]
         v_hi = pt_hi.get(key, v_lo)
+        if key == 't_postAGB_start' and (v_lo > 0) != (v_hi > 0):
+            # one track stops at the AGB tip: its post-AGB would start at its AGB end (keeps AGB_end <= postAGB)
+            v_lo = v_lo if v_lo > 0 else pt_lo.get('t_AGB_end', 0.0)
+            v_hi = v_hi if v_hi > 0 else pt_hi.get('t_AGB_end', 0.0)
         if v_lo > 0 and v_hi > 0:
             pt_tau = np.exp(np.log(v_lo) + f * (np.log(v_hi) - np.log(v_lo)))
-        else:
-            pt_tau = v_lo + f * (v_hi - v_lo)
+        else:   # reached on one side only (0 = not reached): the nearer track decides, never a blend with 0
+            pt_tau = v_lo if f < 0.5 else v_hi
         pt[key] = pt_tau
     interp['phase_transitions'] = pt
 
@@ -2278,77 +2282,106 @@ def load_parsec2_wind_ejecta(ejecta_dir):
     return data
 
 
-def load_nugrid_yields(nugrid_dir):
-    """
-    Load NuGrid Set1ext element yields (Ritter+ 2018, Fryer12 delay).
-    Returns dict: (Z, M) → {'yields': {elem: Msun}, 'Mfinal', 'lifetime'}
-    """
-    data = {}
-    filepath = os.path.join(nugrid_dir, 'element_yield_table_MESAonly_fryer12_delay_total.txt')
-    if not os.path.exists(filepath):
-        return data
-    current = None
-    with open(filepath) as f:
+LIM25_MASSES = np.array([9.22, 10.0, 11.0, 12.0, 13.0, 15.0])
+NUC_SYMBOLS = ('n H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge As Se Br Kr Rb '
+               'Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf '
+               'Ta W Re Os Ir Pt Au Hg Tl Pb Bi').split()
+NUC_Z = {sym.lower(): z for z, sym in enumerate(NUC_SYMBOLS)}
+# odd-odd nuclei between two stable isobars that feed H..Zn: branchings to the stable ends (NNDC)
+DECAY_BRANCH = {(17, 36): {18: 0.981, 16: 0.019}, (29, 64): {28: 0.615, 30: 0.385}, (21, 46): {22: 1.0},
+                (21, 48): {22: 1.0}, (25, 54): {24: 1.0}, (27, 58): {26: 1.0}}
+
+
+def stable_isobars(nugrid_dir):
+    """{A: set of Z} of the stable (and long-lived) nuclides of the NuGrid decayed isotope list, plus Li6, Be9, B10"""
+    path = os.path.join(nugrid_dir, 'isotope_yield_table_MESAonly_fryer12_delay_total.txt')
+    hdr = next(l for l in open(path) if l.startswith('H Isotopes:'))
+    st = {}
+    for tok in hdr.split(':', 1)[1].split(','):
+        if tok.strip():
+            e, a = tok.strip().split('-'); st.setdefault(int(a), set()).add(NUC_Z[e.lower()])
+    for A, Zn in ((6, 3), (9, 4), (10, 5)):
+        st.setdefault(A, set()).add(Zn)
+    return st
+
+
+def decay_to_tracked(Zn, A, st):
+    """{tracked element index: branching} of the stable end of the beta-decay chain of (Zn, A) along its isobar"""
+    stab = st[A]
+    if Zn in stab: ends = {Zn: 1.0}
+    elif (Zn, A) in DECAY_BRANCH: ends = DECAY_BRANCH[(Zn, A)]
+    elif Zn < min(stab): ends = {min(stab): 1.0}
+    elif Zn > max(stab): ends = {max(stab): 1.0}
+    elif NUC_SYMBOLS[Zn] in TRACKED_ELEMENTS:
+        raise ValueError('no decay branching for %s%d' % (NUC_SYMBOLS[Zn], A))
+    else: ends = {}   # between stable isobars beyond Zn: untracked either way
+    return {TRACKED_ELEMENTS.index(NUC_SYMBOLS[z]): b for z, b in ends.items() if NUC_SYMBOLS[z] in TRACKED_ELEMENTS}
+
+
+def load_limongi25(lim_dir):
+    """Limongi, Chieffi & Roberti 2025 (arXiv:2505.22030) Table 2: isotopic ejecta (wind + explosion) of the 9.22,
+    10, 11, 12, 13, 15 Msun solar-Z models at 2.5e4 s. Returns {(Z, A): ejecta per mass} and the mass cut
+    M_init - sum(Table 2) (1.32-1.56 Msun, above the Fe cores of their Table 1)."""
+    iso = {}
+    for ln in open(os.path.join(lim_dir, 'tabyields.tex')):
+        m = re.match(r'\$\\rm\^\{(\d+)\}([A-Za-z]+)\s*\$\s*&(.*)\\\\', ln.strip())
+        if m:
+            iso[(NUC_Z[m.group(2).lower()], int(m.group(1)))] = np.array([float(x) for x in m.group(3).split('&')])
+    assert len(iso) == 333, 'Limongi+2025 Table 2: %d isotopes, expected 333' % len(iso)
+    cut = LIM25_MASSES - np.sum(list(iso.values()), axis=0)
+    return iso, cut
+
+
+def load_lc18_iso_13(cl_dir):
+    """{([Fe/H], Z, A): ejecta} of the 13 Msun non-rotating models of Chieffi & Limongi 2018 set R (table8)"""
+    out = {}
+    with open(os.path.join(cl_dir, 'table8.dat')) as f:
         for line in f:
-            m = re.match(r'H Table: \(M=([\d.]+),Z=([\d.]+)\)', line)
-            if m:
-                M, Z = float(m.group(1)), float(m.group(2))
-                current = (Z, M)
-                data[current] = {'yields': {}, 'x0': {}, 'Mfinal': 0, 'lifetime': 0}
+            if int(line[0:3]) != 0:
                 continue
-            if current is None:
-                continue
-            lm = re.match(r'H Lifetime: (.+)', line)
-            if lm:
-                data[current]['lifetime'] = float(lm.group(1))
-            fm = re.match(r'H Mfinal: (.+)', line)
-            if fm:
-                data[current]['Mfinal'] = float(fm.group(1))
-            if line.startswith('&'):
-                parts = line.strip().split()
-                if len(parts) >= 2:
-                    elem = parts[0].lstrip('&')
-                    try:
-                        yld = float(parts[1].lstrip('&'))
-                        if elem in TRACKED_ELEMENTS:
-                            data[current]['yields'][elem] = yld
-                            data[current]['x0'][elem] = float(parts[2].lstrip('&'))
-                    except ValueError:
-                        pass
-    return data
+            m = re.match(r'([A-Za-z]+)(\d*)$', line[7:12].strip())
+            out[(int(line[4:6]), NUC_Z[m.group(1).lower()], int(m.group(2)) if m.group(2) else 1)] = float(line[13:23])
+    return out
 
 
-def get_limongi25_yields():
-    """
-    Limongi+2025 CCSNe yields for 9-15 Msun at solar Z.
-    From Table 2 of arXiv:2505.22030 (Limongi, Chieffi & Roberti 2025).
-    Note: Fe includes Ni56→Fe56 decay.
-    """
-    # Masses available: 9.22, 10, 11, 12, 13, 15 Msun
-    # These are TOTAL ejected masses per isotope (not net yields)
-    # Remnant masses from Table 1 (iron core masses)
-    masses = [9.22, 10.0, 11.0, 12.0, 13.0, 15.0]
-    remnant_masses = [1.263, 1.211, 1.316, 1.333, 1.456, 1.398]
-    # Total ejected element masses (sum of relevant isotopes, Msun)
-    # Fe = Fe56 + Ni56 (Ni56 decays to Fe56)
-    yields_table = {
-        'H':  [4.676e+0, 5.055e+0, 5.473e+0, 5.884e+0, 6.272e+0, 7.009e+0],
-        'He': [3.057e+0, 3.328e+0, 3.679e+0, 4.026e+0, 4.341e+0, 4.940e+0],
-        'C':  [2.765e-2, 3.690e-2, 5.473e-2, 7.971e-2, 1.133e-1, 1.746e-1],
-        'N':  [2.445e-2, 2.414e-2, 2.916e-2, 3.213e-2, 3.430e-2, 3.758e-2],
-        'O':  [4.806e-2, 7.429e-2, 1.576e-1, 2.287e-1, 3.516e-1, 5.948e-1],
-        'F':  [3.215e-6, 3.171e-6, 3.254e-6, 3.473e-6, 3.747e-6, 4.193e-6],
-        'Ne': [1.168e-2, 1.901e-2, 3.505e-2, 7.853e-2, 8.916e-2, 2.900e-1],
-        'Na': [5.638e-4, 6.490e-4, 6.792e-4, 8.696e-4, 1.295e-3, 3.794e-3],
-        'Mg': [5.081e-3, 7.873e-3, 2.702e-2, 3.830e-2, 5.155e-2, 8.813e-2],
-        'Al': [5.335e-4, 8.411e-4, 2.881e-3, 4.043e-3, 5.859e-3, 9.368e-3],
-        'Si': [1.122e-2, 2.042e-2, 4.297e-2, 5.618e-2, 9.567e-2, 1.095e-1],
-        'S':  [5.609e-3, 9.747e-3, 1.475e-2, 2.068e-2, 3.205e-2, 3.979e-2],
-        'Ca': [1.116e-3, 1.754e-3, 2.440e-3, 3.279e-3, 4.396e-3, 5.738e-3],
-        'Ti': [1.827e-5, 1.987e-5, 2.200e-5, 2.399e-5, 2.600e-5, 2.981e-5],
-        'Fe': [1.979e-2, 2.971e-2, 4.042e-2, 4.771e-2, 5.489e-2, 6.924e-2],
-    }
-    return masses, remnant_masses, yields_table
+def lc18_isotope_ratio(lc, Zn, A, feh):
+    """LC18 13 Msun ejecta of (Zn, A) at [Fe/H] over [Fe/H] = 0; linear in [Fe/H] between the -3..0 nodes (in log where
+    both nodes are > 0), clamped at -3; 1 where LC18 has none at [Fe/H] = 0"""
+    nodes = [-3, -2, -1, 0]
+    x = float(np.clip(feh, -3, 0)); j = min(int(np.floor(x)) + 3, 2); f = x - nodes[j]
+    ref = lc.get((0, Zn, A), 0.0)
+    if ref <= 0:
+        return 1.0
+    a, b = lc.get((nodes[j], Zn, A), 0.0) / ref, lc.get((nodes[j + 1], Zn, A), 0.0) / ref
+    return float(np.exp((1 - f) * np.log(a) + f * np.log(b))) if a > 0 and b > 0 else (1 - f) * a + f * b
+
+
+def limongi25_ejecta(M, Z, X_birth, lim, lc18, st):
+    """Lifetime ejecta per tracked element and ejected mass of an 8-14 Msun star (Limongi+2025, linear in mass,
+    clamped to 9.22-15): every isotope of Table 2, decayed. Z < Z_sun: metal isotopes x their LC18 13 Msun ratio
+    (same code and network; explosive 56Ni stays, secondary N and initial Fe scale); Z > Z_sun: net yields held at
+    the solar values. He net held; H closes the paper's ejected mass."""
+    iso, cut = lim
+    mej = float(np.interp(M, LIM25_MASSES, LIM25_MASSES - cut))
+    feh = np.log10(Z / Z_SOLAR)
+    tot = np.zeros(N_ELEM)
+    for (Zn, A), v in iso.items():
+        r = lc18_isotope_ratio(lc18, Zn, A, feh) if (feh < 0 and Zn > 2) else 1.0
+        for k, br in decay_to_tracked(Zn, A, st).items():
+            tot[k] += br * r * float(np.interp(M, LIM25_MASSES, v))
+    if feh > 0:
+        X_sun = birth_composition(Z_SOLAR)
+        tot[1:] += (X_birth[1:] - X_sun[1:]) * mej
+    tot[0] = mej - tot[1:].sum()
+    return tot, mej
+
+
+def birth_composition(Z):
+    """birth mass fractions per tracked element: Asplund+09 pattern x Z / Z_SOLAR for metals, solar He, H = rest"""
+    X = np.array([SOLAR_MASS_FRAC[e] * (Z / Z_SOLAR) if e not in ('H', 'He') else 0.0 for e in TRACKED_ELEMENTS])
+    X[TRACKED_ELEMENTS.index('He')] = SOLAR_MASS_FRAC['He']
+    X[TRACKED_ELEMENTS.index('H')] = 1.0 - X.sum()
+    return X
 
 
 def get_pisn_yields():
@@ -2630,7 +2663,7 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
 
     Yields (nucleosynthesis):
       M < 8:      Karakas AGB (K&L 2016 for Z>=0.007, K2010 for Z<0.007)
-      8 ≤ M < 14: Limongi+2025 CCSNe + NuGrid Z-scaling
+      8 ≤ M < 14: Limongi+2025 CCSNe (Table 2, decayed), Z dependence from C&L 2018 13 Msun isotope ratios
       M ≥ 14:     PARSEC v2 ejecta (all types)
 
     Remnants (what the star becomes):
@@ -2673,67 +2706,15 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
     p2_wind = load_parsec2_wind_ejecta(os.path.join(base_dir, 'parsec2_vms'))
     p2_wind_Zs = sorted(set(k[0] for k in p2_wind.keys()))
 
-    print("  Loading NuGrid Set1ext yields...", flush=True)
-    nugrid = load_nugrid_yields(os.path.join(base_dir, 'nugrid'))
-    nugrid_Zs = sorted(set(k[0] for k in nugrid.keys()))
-    NUGRID_REF_Z = 0.02  # NuGrid's approximate solar
-
-    print("  Loading Limongi+2025 CCSNe yields...", flush=True)
-    lim25_masses, lim25_remnants, lim25_yields = get_limongi25_yields()
+    print("  Loading Limongi+2025 Table 2 (8-14 Msun) and C&L 2018 13 Msun isotopes (its Z dependence)...", flush=True)
+    lim25 = load_limongi25(os.path.join(base_dir, 'limongi2025'))
+    lc18_13 = load_lc18_iso_13(os.path.join(base_dir, 'chieffi_limongi2018'))
+    st_iso = stable_isobars(os.path.join(base_dir, 'nugrid'))
+    print("    mass cut M_init - sum(Table 2): " + ", ".join(f"{m:g}: {c:.3f}" for m, c in zip(LIM25_MASSES, lim25[1])))
 
     print("  Loading C&L 2018 yields + pre-SN data...", flush=True)
     cl_yields, cl_fehs, CL_MASSES, cl_presn = load_CL18_yields(
         os.path.join(base_dir, 'chieffi_limongi2018'))
-
-    # Solar initial composition for Limongi25 total→net conversion
-    X_init_solar = p2_init_comp.get(0.014, {})
-    if not X_init_solar:
-        print("  WARNING: no PARSEC v2 Z=0.014 initial composition, using Z=0.01")
-        X_init_solar = p2_init_comp.get(0.01, {})
-
-    # Pre-compute NuGrid Z-scaling factors (ratio vs solar for 12 Msun)
-    nugrid_ref = nugrid.get((NUGRID_REF_Z, 12.0), {}).get('yields', {})
-    nugrid_z_scale = {}
-    for Z_ng in nugrid_Zs:
-        y_z = nugrid.get((Z_ng, 12.0), {}).get('yields', {})
-        ratios = {}
-        for elem in TRACKED_ELEMENTS:
-            ref_val = nugrid_ref.get(elem, 0)
-            z_val = y_z.get(elem, 0)
-            if ref_val > 0 and z_val > 0:
-                ratios[elem] = z_val / ref_val
-            else:
-                ratios[elem] = 1.0
-        nugrid_z_scale[Z_ng] = ratios
-
-    # NuGrid absolute net yields at solar Z for 12 Msun (fallback for
-    # elements not in Limongi+2025).  NuGrid "yields" are total ejected,
-    # so convert to net:  net = total - X_init * M_ej
-    nugrid_solar_12 = nugrid.get((NUGRID_REF_Z, 12.0), {})
-    nugrid_12_Mej = 12.0 - nugrid_solar_12.get('Mfinal', 12.0)
-    nugrid_net_solar = {}
-    for elem in TRACKED_ELEMENTS:
-        total = nugrid_solar_12.get('yields', {}).get(elem, 0.0)
-        x_init = X_init_solar.get(elem, 0.0)
-        nugrid_net_solar[elem] = total - x_init * nugrid_12_Mej
-    lim25_elements = set(lim25_yields.keys())  # elements Limongi provides
-
-    ng_massive = sorted(m for (z, m) in nugrid if m >= 12)
-    def nugrid_net_per_mej(Zq, M):
-        """NuGrid net yield per ejected mass (against its own X0), linear in M over its >= 12 Msun models (clamped)
-        and in log Z between its grids (clamped)"""
-        def at(Zg, Mg):
-            d = nugrid[(Zg, Mg)]; mej = Mg - d['Mfinal']
-            return {e: (d['yields'].get(e, 0.0) - d['x0'].get(e, 0.0) * mej) / mej for e in TRACKED_ELEMENTS}
-        def at_M(Zg):
-            Ms = sorted(m for (z, m) in nugrid if z == Zg and m >= 12)
-            Mc = float(np.clip(M, Ms[0], Ms[-1])); j = min(int(np.searchsorted(Ms, Mc, side='right')) - 1, len(Ms) - 2)
-            f = (Mc - Ms[j]) / (Ms[j + 1] - Ms[j]); a, b = at(Zg, Ms[j]), at(Zg, Ms[j + 1])
-            return {e: (1 - f) * a[e] + f * b[e] for e in TRACKED_ELEMENTS}
-        lzs = np.log10(nugrid_Zs); lz = float(np.clip(np.log10(Zq), lzs[0], lzs[-1]))
-        j = min(int(np.searchsorted(lzs, lz, side='right')) - 1, len(nugrid_Zs) - 2)
-        f = (lz - lzs[j]) / (lzs[j + 1] - lzs[j]); a, b = at_M(nugrid_Zs[j]), at_M(nugrid_Zs[j + 1])
-        return {e: (1 - f) * a[e] + f * b[e] for e in TRACKED_ELEMENTS}
 
     N_Z, N_M = len(Z_grid), len(M_grid)
     yields = np.zeros((N_Z, N_M, N_ELEM))
@@ -2741,7 +2722,7 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
     rem_type = np.zeros((N_Z, N_M), dtype=int)
     rem_mass = np.zeros((N_Z, N_M))
     yield_src = np.zeros((N_Z, N_M), dtype=int)
-    # yield_src: 0=none, 1=Karakas_AGB, 2=Limongi25+NuGrid, 3=CL18(unused), 4=PARSEC_v2
+    # yield_src: 0=none, 1=Karakas_AGB, 2=Limongi25 (C&L 2018 Z ratios), 3=CL18(unused), 4=PARSEC_v2
 
     n_src = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
 
@@ -2749,7 +2730,6 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
         # Nearest Z in each source
         log_Z = np.log10(max(Z, 1e-12))
         Z_p2 = min(p2_Zs, key=lambda z: abs(np.log10(max(z, 1e-12)) - log_Z)) if p2_Zs else None
-        Z_ng = min(nugrid_Zs, key=lambda z: abs(np.log10(max(z, 1e-12)) - log_Z)) if nugrid_Zs else None
         Z_kar = min(kar_Z, key=lambda z: abs(np.log10(z) - np.log10(max(Z, 1e-6)))) if kar_Z else None
         # AGB net yields: linear in log Z between the bracketing Karakas metallicities (clamped at the ends)
         if kar_Z:
@@ -2789,41 +2769,15 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
                 n_src[yield_src[iz, im]] += 1
                 continue
 
-            # ═══ Low-mass CCSNe: 8 ≤ M < 14 Msun ═══
+            # ═══ Low-mass CCSNe: 8 ≤ M < 14 Msun: Limongi+2025 ═══
             if M < 14:
-                # Remnant: ECSN for 8-10 Msun, CCSN NS for 10-13+
-                if M <= 10:
-                    rem_type[iz, im] = 1   # ECSN → NS
-                    rem_mass[iz, im] = 1.25
-                else:
-                    rem_type[iz, im] = 2   # CCSN → NS
-                    rem_mass[iz, im] = np.interp(M, lim25_masses, lim25_remnants)
-
+                rem_type[iz, im] = 1 if M <= 10 else 2   # ECSN / CCSN label; NS either way
+                rem_mass[iz, im] = np.interp(M, LIM25_MASSES, lim25[1])   # the paper's mass cut
                 yield_src[iz, im] = 2
-
-                # Limongi's own ejecta mass (from their remnant masses) — use
-                # this for the net yield conversion so that yields stay internally
-                # consistent even when our grid's M_ej differs (e.g. M=8 extrapolation).
-                lim25_mej = [m - r for m, r in zip(lim25_masses, lim25_remnants)]
-                M_ej_lim = np.interp(M, lim25_masses, lim25_mej)
-
-                # Base yields from Limongi+2025 (total ejected at solar Z).
-                # Elements not in Limongi: net_yield = 0 → returned at birth
-                # composition (X_birth * Mej in the C injection formula).
-                # metallicity dependence and the elements Limongi lacks from NuGrid net yields (per unit ejecta)
-                ng_now, ng_ref = nugrid_net_per_mej(Z * NUGRID_REF_Z / Z_SOLAR, M), nugrid_net_per_mej(NUGRID_REF_Z, M)
-                for ie, elem in enumerate(TRACKED_ELEMENTS):
-                    if elem in lim25_elements:
-                        # Limongi+2025: interpolate in mass, convert total→net
-                        y_total = np.interp(M, lim25_masses, lim25_yields[elem])
-                        y_net = y_total - X_init_solar.get(elem, 0.0) * M_ej_lim \
-                            + M_ej_lim * (ng_now.get(elem, 0.0) - ng_ref.get(elem, 0.0))
-                    else:
-                        y_net = M_ej_lim * ng_now.get(elem, 0.0)
-
-                    yields[iz, im, ie] = y_net
-
-                # Limongi+2025 yields are lifetime totals; build_all subtracts the wind net (wind_yields) at the SN
+                # lifetime net yields against the birth composition used at runtime (build_all subtracts the wind net)
+                X_b = birth_composition(Z)
+                tot, mej = limongi25_ejecta(M, Z, X_b, lim25, lc18_13, st_iso)
+                yields[iz, im, :] = tot - X_b * mej
                 n_src[2] += 1
                 continue
 
@@ -3265,15 +3219,7 @@ def build_all(base_dir, output_file):
     # birth composition per Z (also written as X_init): solar pattern x Z/Z_SOLAR for metals, solar He, H = remainder
     iH  = TRACKED_ELEMENTS.index('H')
     iHe = TRACKED_ELEMENTS.index('He')
-    X_init = np.zeros((N_Z, N_ELEM))
-    for iz in range(N_Z):
-        Zv = Z_grid[iz]
-        for k, e in enumerate(TRACKED_ELEMENTS):
-            if e in ('H', 'He'):
-                continue
-            X_init[iz, k] = SOLAR_MASS_FRAC[e] * (Zv / Z_SOLAR)
-        X_init[iz, iHe] = SOLAR_MASS_FRAC['He']
-        X_init[iz, iH]  = 1.0 - X_init[iz, iHe] - X_init[iz, [k for k in range(N_ELEM) if k not in (iH, iHe)]].sum()
+    X_init = np.array([birth_composition(Zv) for Zv in Z_grid])
     assert np.allclose(X_init.sum(axis=1), 1.0, atol=1e-12), 'X_init rows must sum to 1'
 
     # Winds of M >= 8: birth composition plus the source's wind enrichment (build_wind_dx) over the track's wind mass;
@@ -3282,6 +3228,7 @@ def build_all(base_dir, output_file):
     wind_dx, wind_w_p2 = build_wind_dx(Z_grid, M_grid, base_dir)
     wind_yields[:] = 0.0
     n_wind_capped = 0; n_late = 0; late_max = 0.0
+    wind_total = np.zeros((N_Z, N_M))   # all wind mass, out at lifetime_yr
     surf_out = surface.astype(np.float64).copy()   # rewritten at alive ages with the composition used for the wind
     elem_ej_wind = np.zeros((N_Z, N_M, N_AGE, N_ELEM), dtype=np.float32)
     for iz in range(N_Z):
@@ -3294,11 +3241,18 @@ def build_all(base_dir, output_file):
             ia = np.where(M_t > 0)[0]
             if M_grid[im] < WIND_DX_M_MIN:
                 dM[:] = 0.0   # no winds below 8 Msun (as in GIZMO): all mass leaves with the AGB event
+            f_d = 0.0         # death age between the last alive grid age and the next, as a fraction in log age
             if np.isfinite(wind_w_p2[iz, im]) and ia.size > 1:
                 dM[ia[0]] += max(0.0, M_grid[im] - M_t[ia[0]])               # lost before ZAMS: with the first step
                 late = (M_grid[im] - dM.sum()) - M_final_track[iz, im]   # lost after the last alive grid age
                 if late > 0:
-                    dM[ia[-1]] += late
+                    j = ia[-1]
+                    if j + 1 < N_AGE:
+                        f_d = (np.log10(lifetime[iz, im]) - log_age_grid[j]) / (log_age_grid[j + 1] - log_age_grid[j])
+                    if 1e-6 < f_d <= 1.0:
+                        dM[j + 1] += late   # leaves between the last alive grid age and death (anchored below)
+                    else:
+                        dM[j] += late; f_d = 0.0
                     n_late += 1; late_max = max(late_max, late)
             if dM.sum() <= 0:
                 if ia.size:   # no mass loss: surface at birth composition plus the track's change
@@ -3315,6 +3269,8 @@ def build_all(base_dir, output_file):
                 net[iH] -= net.sum()
                 Y = surface[iz, im, :, iHe].astype(np.float64)
                 s = np.maximum(0.0, Y - Y[ia[0]]) if ia.size else np.zeros(N_AGE)
+                if f_d > 0:
+                    s[ia[-1] + 1] = s[ia[-1]]   # the late wind has the composition of the last alive step
                 xw = wind_mass_fractions(X_init[iz], net, dM, s)
                 xw /= xw.sum(axis=1, keepdims=True)
                 wind_yields[iz, im] = net
@@ -3327,13 +3283,18 @@ def build_all(base_dir, output_file):
             cum = np.cumsum(xw * dM[:, None], axis=0)
             alive_idx = np.where(M_t > 0)[0]
             if alive_idx.size > 0:
-                last = alive_idx[-1]
+                last = alive_idx[-1] + (1 if f_d > 0 else 0)
                 cum[last+1:] = cum[last]
+                if f_d > 0:
+                    # GIZMO interpolates linearly in log age and clamps the age at lifetime_yr: the first grid age
+                    # after death holds the value that reaches the full wind exactly at death
+                    cum[last] = cum[last - 1] + (cum[last] - cum[last - 1]) / f_d
             elem_ej_wind[iz, im, :, :] = cum.astype(np.float32)
+            wind_total[iz, im] = elem_ej_wind[iz, im, -1, :].astype(np.float64).sum()
     w = wind_w_p2[np.isfinite(wind_w_p2)]
     print(f"  wind composition (M >= {WIND_DX_M_MIN}): PARSEC v2 {np.sum(w == 1)}, BoOST {np.sum(w == 0)}, "
           f"blend {np.sum((w > 0) & (w < 1))} (Z, M) points; {n_wind_capped} with an element capped at full depletion")
-    print(f"  wind lost after the last alive grid age added to the last interval: {n_late} (Z, M) points, max {late_max:.2f} Msun")
+    print(f"  wind lost after the last alive grid age, released between it and death: {n_late} (Z, M) points, max {late_max:.2f} Msun")
 
     # Redefine M_current = M_init − Σ_k cum_wind(t).  Preserve post-death
     # sentinel (M_current == 0 marker) — elem_ej_wind plateaus past death so
@@ -3343,9 +3304,16 @@ def build_all(base_dir, output_file):
     M_current   = np.where(old_zero, 0.0,
                            M_grid[None, :, None] - sum_cw_full)
     print(f"  Redefined M_current = M_init − Σ cum_wind (wind ledger now consistent)")
+    # v_wind at the first grid age after death repeats the last alive value: GIZMO interpolates up to lifetime_yr, so
+    # the wind leaving between the last alive grid age and death keeps the final speed (as the radiation bands do)
+    for iz in range(N_Z):
+        for im in range(N_M):
+            ia = np.where(M_current[iz, im] > 0)[0]
+            if ia.size and ia[-1] + 1 < N_AGE:
+                v_wind_arr[iz, im, ia[-1] + 1] = v_wind_arr[iz, im, ia[-1]]
 
-    # ── Update M_preSN to match the redefined M_current at last alive index.
-    # Then Σ cum_wind(t_end) = M_init − M_preSN exactly. The yield-closure
+    # ── M_preSN = M_init − all wind (out at lifetime_yr; the wind lost after the last alive grid age is not in
+    # M_current there). Then Σ cum_wind(t_end) = M_init − M_preSN exactly. The yield-closure
     # enforcement block above already rescaled elem_ej_SN to match
     # (M_preSN − rem); since the writer's _absolute_ejecta also rescales to
     # Mej = M_preSN − rem, Σ elem_ej_SN tracks any update to M_preSN here.
@@ -3354,7 +3322,7 @@ def build_all(base_dir, output_file):
         for im in range(N_M):
             alive_idx = np.where(M_current[iz, im] > 0)[0]
             if alive_idx.size > 0:
-                new_preSN = float(M_current[iz, im, alive_idx[-1]])
+                new_preSN = float(M_grid[im] - wind_total[iz, im])   # all wind is out at death (incl. the late part)
                 if abs(new_preSN - M_preSN[iz, im]) > 1e-9:
                     M_preSN[iz, im] = new_preSN
                     n_preSN_updated += 1
@@ -3546,7 +3514,7 @@ def build_all(base_dir, output_file):
                                            'Others: BH from CO core, PPISN capped 45 Msun.')
         f.create_dataset('yield_source', data=yield_src)
         f['yield_source'].attrs['encoding'] = ('0=none, 1=Karakas_AGB(KL16+K10), '
-                                                 '2=Limongi25+NuGrid, '
+                                                 '2=Limongi25 (C&L 2018 13 Msun Z ratios), '
                                                  '3=unused, 4=PARSEC_v2')
         f['yield_source'].attrs['note'] = ('Remnants + yields for M>=14 from PARSEC v2. '
                                            'FSN/DBH: yields=0 (failed SN, wind handled separately). '
@@ -3580,10 +3548,12 @@ def build_all(base_dir, output_file):
         f.attrs['Z_sun'] = np.float64(Z_SOLAR)   # read by GIZMO as its solar Z; keep name and type
         f.attrs['solar_abundance_source'] = 'Asplund+09 Table 1 photospheric log eps, metals C..Zn normalized to Z_sun (stellar/solar_abundances.py)'
         f.attrs['yield_sources'] = ('Karakas AGB < 8 Msun [K(2010) Z < 0.007, K&L(2016) Z >= 0.007, linear in log Z between] '
-                                    '+ Limongi+(2025) 8-14 Msun with NuGrid net-yield Z dependence and missing elements '
+                                    '+ Limongi+(2025) 8-14 Msun [arXiv:2505.22030 Table 2, all isotopes decayed; Z < Z_sun: '
+                                    'isotopes x Chieffi & Limongi (2018) set R 13 Msun ratio; Z > Z_sun: solar net yields] '
                                     '+ PARSEC v2 total and wind ejecta >= 14 Msun (BoOST wind enrichment 8-14 Msun) '
                                     '+ Iwamoto(1999) Type Ia')
-        f.attrs['remnant_source'] = 'PARSEC v2 VMS (CCSN/FSN/PPISN/PISN/DBH) for M>=14'
+        f.attrs['remnant_source'] = ('PARSEC v2 VMS (CCSN/FSN/PPISN/PISN/DBH) for M>=14; 8-14 Msun: NS of the '
+                                     'Limongi+(2025) mass cut, M_init - sum(Table 2)')
         f.attrs['tracked_elements'] = TRACKED_ELEMENTS
         f.attrs['N_Z'] = N_Z
         f.attrs['N_M'] = N_M
