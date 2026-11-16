@@ -6,9 +6,12 @@
 - band integration: a blackbody sampled like ATLAS9 gives the analytic Planck photon rates (band edges included)
 - the table names the radiation source it was built with (no "Planck" label on a model-atmosphere table)
 - time integrals: post-MS and lifetime integral of L_bol = the raw PARSEC v2 track's (age sampling)
+- O stars: the hotstar_stack Q(H)/L and Q(HeI)/L at the Teff and log g of Martins+05 Tables 1-3 (CMFGEN with winds,
+  Galactic) within 0.15 and 0.5 dex at every point, Q(H) within 0.05 dex on average
 - PARSEC v2 photon tables (Costa+25, same tracks, WM-basic/PoWR/ATLAS9 atmospheres): lifetime-integrated Q(H) within
-  0.3 dex at 20-100 Msun (TLUSTY vs wind atmospheres at late O), Q(HeI) within 0.35 dex at 40-100 Msun; Q(HeI) at
-  20 Msun, Q(HeII) and LW printed only (uncertain by up to orders of magnitude)
+  0.3 dex at 20-100 Msun, Q(HeI) within 0.35 dex at 40-100 Msun; Q(HeI) at 20 Msun, Q(HeII) and LW printed only.
+  At late O (28-34 kK) PARSEC's WM-basic rates are 0.25 dex (Q(H)) and 0.6 dex (Q(HeI)) below Martins+05, while
+  TLUSTY, CMFGEN and PoWR agree with it to 0.05 dex (Q(H)); so 20 Msun at Z >= 0.01 sits +0.2-0.3 dex above PARSEC
 """
 import os, re, sys
 from glob import glob
@@ -47,6 +50,23 @@ def radiation_source_labelled(t, w, root):
     ok = opt in ('atlas9', 'planck', 'atlas9_nonionizing', 'hotstar_stack') and 'TODO' not in src and \
         (opt == 'planck') == src.startswith('Planck')
     return ok, 'radiation_source_option = %r, radiation_source = %r' % (opt, src[:90])
+
+
+@test
+def ostar_rates_vs_martins05(t, w, root):
+    import build_stellar_tables as B
+    B.RADIATION['source'] = 'hotstar_stack'
+    d = np.genfromtxt(os.path.join(HERE, 'data', 'martins05_ostar_theoretical.txt'), dtype=None, encoding=None)
+    T = np.array([r[2] for r in d], float); lg = np.array([r[3] for r in d], float)
+    lT = np.log10(T); sT4 = 5.670374e-5 * T ** 4
+    rad = B.compute_radiation_from_lut(lT, np.zeros(len(T)), lg, np.full(len(T), np.log10(B.Z_SOLAR)))
+    L1 = B.L_sun                                    # log L = 0: rates per L_sun
+    d0 = np.log10(rad['Q_ion'] / L1) - (np.array([r[4] for r in d], float) - np.log10(sT4))
+    d1 = np.log10(rad['Q_He0'] / L1) - (np.array([r[5] for r in d], float) - np.log10(sT4))
+    k0, k1 = int(np.argmax(abs(d0))), int(np.argmax(abs(d1)))
+    ok = abs(d0).max() < 0.15 and abs(d1).max() < 0.5 and abs(d0.mean()) < 0.05
+    return ok, 'stack - Martins+05 (%d O stars): dlog Q_H/L mean %+.3f, max %+.2f (%s %s); dlog Q_HeI/L mean %+.2f, max %+.2f (%s %s)' % (
+        len(T), d0.mean(), d0[k0], d[k0][1], d[k0][0], d1.mean(), d1[k1], d[k1][1], d[k1][0])
 
 
 def _raw_track(Z, M):

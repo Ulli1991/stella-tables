@@ -1,5 +1,16 @@
 # Changelog
 
+## fix/late-o-ionizing (tables unchanged)
+
+- Late-O ionizing rates checked against Martins, Schaerer & Hillier 2005 (CMFGEN with winds, Tables 1-3, 36 Galactic
+  O stars): the stack is +0.02 dex in Q(H)/L on average (max +0.14 at O9.5 V) and +0.04 dex in Q(HeI)/L (max +0.47 at
+  O9.5 V). The PoWR OB grid agrees with Martins+05 to +0.03 dex in Q(H) at 28-34 kK. PARSEC v2's photon tables
+  (WM-basic) are 0.25 dex (Q(H)) and 0.6 dex (Q(HeI)) below Martins+05 at the same Teff and log g along the 20 Msun
+  track; Martins+05 Sect. 5.3.2 reports the same WM-basic offset (up to 0.3 dex for dwarfs below 40 kK). The +0.24 / +0.77
+  dex offset at 20 Msun, Z = 0.014 is therefore PARSEC's atmosphere, not ours; no table change.
+- New test `ostar_rates_vs_martins05` (`tests/stellar/test_radiation.py`, data `tests/stellar/data/`): Q(H)/L within
+  0.15 dex at every Martins+05 point and 0.05 dex on average, Q(HeI)/L within 0.5 dex.
+
 ## Reproducible build (after tables-aa87301)
 
 - `build.sh` checks the Python environment against `requirements-build.txt` (python-waterboa 2026.07: Python 3.14.6,
@@ -67,7 +78,7 @@ Compared with the tables GIZMO pins (stella-tables a4830ab; unified 14a23087…,
   L_bol / raw track: 0.16-0.92 -> 0.94-0.99.
 - Lifetime-integrated Q(H) vs the pinned table: x1.0-1.4 at 20-40 Msun, x1.7-2.3 at 100-300 Msun; L_FUV x0.5-0.9
   above 40 Msun. Against the PARSEC v2 photon tables: Q(H) and Q(HeI) within 0.1 dex except 20 Msun at Z = 0.014
-  (+0.24 / +0.77 dex, TLUSTY vs wind atmospheres at late O); Q(HeII) differs by up to 3 dex either way.
+  (+0.24 / +0.77 dex: PARSEC's WM-basic rates are low at late O, see fix/late-o-ionizing); Q(HeII) differs by up to 3 dex either way.
 - New datasets `log_Q_He0`, `log_Q_He1`, `log_Q_ion_He0`; composite bands are exact sums of the atomic bands.
 
 ### Datasets unchanged
