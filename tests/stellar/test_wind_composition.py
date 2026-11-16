@@ -5,10 +5,11 @@
 
 - BoOST surface columns: the builder's isotope -> element map equals the names in fdat-columns.txt.
 - Massive-star winds (M >= 14, PARSEC v2 metallicity): the end-of-wind element masses carry the PARSEC v2 wind
-  ejecta enrichment for all 27 elements, on the table's birth composition:
-      cum_wind_k(end) / W - X_init_k  ==  ejecta_k / (M - Mfin) - X_PARSEC,init_k      (W = M_init - M_preSN)
-- Per-star budget (PARSEC v2 CCSN/PPISN/PISN points): wind + SN ejecta = X_init (M - rem) + PARSEC v2 total net yield,
-  per element, i.e. the wind-phase production is not counted again at the SN.
+  ejecta enrichment for all 27 elements, on the table's birth composition (W = M_init - M_preSN):
+      cum_wind_k(end) / W - X_init_k  ==  r_k = ejecta_k / (M - Mfin) - X_PARSEC,init_k  where r_k >= 0,
+                                          X_init_k r_k / X_PARSEC,init_k                where r_k < 0  (H closes)
+- Per-star budget (PARSEC v2 CCSN/PPISN points): wind + SN ejecta = X_init (M - rem) + the PARSEC v2 wind and explosive
+  net yields with the same rule, per element, i.e. the wind-phase production is not counted again at the SN.
 Only grid points where the table Z and M are PARSEC v2 grid values are compared (no interpolation involved).
 """
 import os, re, sys
@@ -132,10 +133,12 @@ def wind_end_matches_parsec2_wind_ejecta(t, w, root):
         if W <= 0: continue
         Wp = Mt[im] - float(wr['Mfin'])
         end = cw[iz, im, -1, :].astype(np.float64)
-        # PARSEC v2 enrichment; data rules: unfilled (exactly 0) isotope columns = net 0, Li/Be and rounding to H,
-        # depletion capped at our birth fraction with the excess to H
+        # PARSEC v2 enrichment; data rules: unfilled (exactly 0) isotope columns = net 0; a depleted element loses the
+        # source's destroyed fraction of our birth content; H closes
         dx = np.array([wel[e] / Wp - xw[e] for e in ELEMS])
-        dx[0] -= dx.sum(); dx = np.maximum(dx, -X[iz]); dx[0] -= dx.sum()
+        x0 = np.array([xw[e] for e in ELEMS])
+        dx = np.where(dx < 0, np.where(x0 > 0, dx / np.where(x0 > 0, x0, 1.0), 0.0) * X[iz], dx)
+        dx[0] = -dx[1:].sum()
         for k, e in enumerate(ELEMS):
             want, have = dx[k], end[k] / W - X[iz, k]
             err = abs(have - want) / (REL_TOL * (X[iz, k] + abs(want)) + ABS_TOL)
@@ -169,13 +172,22 @@ def lifetime_budget_wind_plus_sn(t, w, root):
     cw, X, SN = w['elem_ej_wind_cumulative'], t['X_init'][()], t['elem_ej_SN_mass'][()]
     rt, rm, Mt, Zt = t['remnant_type'][()], t['remnant_mass'][()], t['M_init'][()], t['Z'][()]
     worst, nbad, n = (0., None), 0, 0
-    for iz, im, Zp, _, (tr, tel), xw in parsec2_points(t, root):
+    for iz, im, Zp, (wr, wel_), (tr, tel), xw in parsec2_points(t, root):
         if int(rt[iz, im]) not in (2, 4) or tr['SNT'] not in ('CCSN', 'PPISN'): continue   # explosions with a remnant
         M = Mt[im]; Mej_p = M - float(tr['Mbar'])
         end = cw[iz, im, -1, :].astype(np.float64)
         n += 1
-        want = np.array([tel[e] - xw[e] * Mej_p for e in ELEMS])   # PARSEC v2 lifetime net yield
-        want[0] -= want.sum()            # the source's sum of net yields (Li/Be, rounding) is taken up by H
+        # PARSEC v2 lifetime net yield as the table transfers it: wind (per unit wind mass) and explosion (per unit
+        # explosive mass M_preSN - M_bar) each r = x - X_PARSEC,init; a depleted element loses the source's destroyed
+        # fraction of our birth content (X_init); H closes. Elements depleted nowhere: exactly the raw net yield.
+        x0 = np.array([xw[e] for e in ELEMS]); Wp = M - float(wr['Mfin'])
+        W = M - float(t['M_preSN'][iz, im])
+        rw = np.array([wel_[e] / Wp for e in ELEMS]) - x0
+        Ex = np.array([tel[e] - wel_[e] for e in ELEMS]); mx = float(t['M_preSN'][iz, im]) - float(tr['Mbar'])
+        rx = Ex / Ex.sum() - x0
+        tf = lambda r: np.where(r < 0, np.where(x0 > 0, r / np.where(x0 > 0, x0, 1.0), 0.0) * X[iz], r)
+        want = tf(rw) * W + tf(rx) * mx
+        want[0] = -want[1:].sum()
         for k, e in enumerate(ELEMS):
             have = end[k] + SN[iz, im, k] - X[iz, k] * (M - rm[iz, im])
             want_k = want[k]

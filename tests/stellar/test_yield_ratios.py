@@ -4,8 +4,7 @@ at 8 and 14 Msun, and negative (clipped) ejecta.
 
   test_yield_ratios.py BUILD_DIR      exit 0 = all PASS
 
-Lifetime ejecta of one star = SN (or AGB) ejecta + cumulative wind at lifetime_yr (evaluated as GIZMO does: linear in
-log age, age clamped at the star's lifetime). Net yield = lifetime ejecta - X_init * (M_init - M_rem).
+Lifetime ejecta of one star = SN (or AGB) ejecta + all wind (elem_ej_wind_total). Net yield = lifetime ejecta - X_init * (M_init - M_rem).
 
 IMF: Kroupa (2001) 0.08-100 Msun (slopes 1.3 / 2.3, break 0.5 Msun), per Msun formed; net yields linear in log M
 between grid masses. [X/Y] = log10 of the net-yield mass ratio over the Asplund+09 mass ratio (the table's X_init).
@@ -67,7 +66,10 @@ class Tab:
         self._wind = {}
 
     def wind_at_death(self, iz, im):
-        """cumulative wind per element at lifetime_yr, linear in log age between the grid ages (GIZMO's lookup)"""
+        """all wind per element: elem_ej_wind_total (tables before it: the cumulative wind at lifetime_yr, linear in
+        log age between the grid ages)"""
+        if 'elem_ej_wind_total' in self.w:
+            return self.w['elem_ej_wind_total'][iz, im].astype(np.float64)
         if (iz, im) not in self._wind:
             x = np.log10(max(self.lt[iz, im], 100.0))
             i = int(np.clip(np.searchsorted(self.la, x, side='right') - 1, 0, len(self.la) - 2))
@@ -267,6 +269,29 @@ def limongi25_remnant_is_paper_mass_cut(T):
 
 # ── yield seams ───────────────────────────────────────────────────────
 
+def parsec2_depleted(root, Z, M):
+    """elements the raw PARSEC v2 model (Z, M) depletes in its wind or its explosive part (below its birth fraction)"""
+    d = os.path.join(root, 'parsec2_vms')
+    zdir = [p for p in os.listdir(d) if p.startswith('ejecta_Z') and np.isclose(float(p[8:]), Z, rtol=1e-9)]
+    if not zdir: return set()
+    rd = lambda suf, first: [l for l in open(os.path.join(d, zdir[0], [p for p in os.listdir(os.path.join(d, zdir[0])) if p.endswith(suf)][0])).read().splitlines()]
+    L, W = rd('total_ejecta.dat', 7), rd('winds_ejecta.dat', 4)
+    names = L[3].split()[7:]; tok = L[1].replace('#', '').split(); x0 = [float(v) for v in tok[-len(names):]]
+    t_ = next(l.split() for l in L[4:] if len(l.split()) >= 7 + len(names) and np.isclose(float(l.split()[0]), M))
+    w_ = next(l.split() for l in W[4:] if len(l.split()) >= 4 + len(names) and np.isclose(float(l.split()[0]), M))
+    Wp, Mx = M - float(w_[1]), float(t_[1]) - float(t_[5])
+    out, ew, ex, X0 = set(), {}, {}, {}
+    for j, (nm, x) in enumerate(zip(names, x0)):
+        e = {'AL26': 'Mg'}.get(nm, re.match(r'[A-Z]+', nm).group(0).capitalize())
+        if e not in ELEMS: continue
+        vt, vw = float(t_[7 + j]), float(w_[4 + j])
+        if vt == 0.0 and x > 0: vw, vt = x * Wp, x * (Wp + Mx)
+        elif vw == 0.0 and x > 0: vt, vw = vt + x * Wp, x * Wp
+        ew[e] = ew.get(e, 0.0) + vw; ex[e] = ex.get(e, 0.0) + vt - vw; X0[e] = X0.get(e, 0.0) + x
+    sx = sum(ex.values())
+    return {e for e in X0 if ew[e] < X0[e] * Wp * (1 - 1e-12) or (Mx > 0 and ex[e] / sx < X0[e] * (1 - 1e-12))}
+
+
 def parsec2_raw_net(root, Z, M):
     """{elem: net} of the raw PARSEC v2 total-ejecta row (Z, M) against the file's initial composition, ejecta =
     M - M_bar; elements with an unfilled (exactly 0) column in the total or the wind file are left out"""
@@ -305,8 +330,10 @@ SEAM_SHOW = ['O', 'Mg', 'Si', 'Fe', 'Ni', 'Mn', 'Zn', 'K', 'N']
 @test
 def seam_14_matches_sources(T):
     """12 -> 14 Msun (Limongi+2025 -> PARSEC v2): the table's per-element net-yield step equals the step between the two
-    raw sources at every Z where PARSEC v2 has ejecta (tolerance 1e-3 of the nets + 1e-4 of the birth mass); the
-    source steps printed are physics of the two sources, not of the table"""
+    raw sources at every Z where PARSEC v2 has ejecta (tolerance 1e-3 of the nets + 1e-4 of the birth mass), for the
+    elements the PARSEC v2 model depletes in neither its wind nor its explosion (depleted ones leave as fractions of the
+    star's birth content, tested in test_yields_raw / test_wind_composition); the source steps printed are physics of
+    the two sources, not of the table"""
     root = os.path.join(T.build, 'data_root'); L = (limongi25(), lc18_13msun(), stable_isobars())
     worst, n, doc = (0.0, None), 0, []
     i12, i14 = T.im(12.0), T.im(14.0)
@@ -315,9 +342,11 @@ def seam_14_matches_sources(T):
         if p2 is None: continue
         lim, _ = limongi_expected_net(12.0, Z, T.X[iz], L)
         h12, h14 = T.net(iz, i12), T.net(iz, i14)
+        dep = parsec2_depleted(root, Z, 14.0)
         for e, v in p2.items():
-            k = ELEMS.index(e); n += 1
-            if e == 'H': continue
+            k = ELEMS.index(e)
+            if e == 'H' or e in dep: continue   # H closes; depleted elements are transferred as fractions (by design)
+            n += 1
             tol = 1e-3 * (abs(v) + abs(lim[k])) + 1e-4 * T.X[iz, k] * 14.0 + 1e-9
             err = abs((h14[k] - h12[k]) - (v - lim[k])) / tol
             if err > worst[0]: worst = (err, (Z, e, h14[k] - h12[k], v - lim[k]))
@@ -349,16 +378,49 @@ def seam_8_matches_sources(T):
 
 # ── negative ejecta ───────────────────────────────────────────────────
 
+def parsec2_zero_elements(T, iz, im):
+    """elements with exactly 0 in the raw explosive part (total - wind) of the PARSEC v2 models at the nearest PARSEC v2
+    Z that bracket (or equal) M"""
+    root = os.path.join(T.build, 'data_root', 'parsec2_vms'); Z, M = T.Z[iz], T.M[im]
+    zs = {float(p[8:]): p for p in os.listdir(root) if p.startswith('ejecta_Z')}
+    Zp = min(zs, key=lambda z: abs(np.log10(z) - np.log10(Z)))
+    d = os.path.join(root, zs[Zp]); fs = os.listdir(d)
+    L = open(os.path.join(d, [f for f in fs if f.endswith('total_ejecta.dat')][0])).read().splitlines()
+    W = open(os.path.join(d, [f for f in fs if f.endswith('winds_ejecta.dat')][0])).read().splitlines()
+    names = L[3].split()[7:]
+    rows = {float(l.split()[0]): l.split() for l in L[4:] if len(l.split()) >= 7 + len(names)}
+    wr = {float(l.split()[0]): l.split() for l in W[4:] if len(l.split()) >= 4 + len(names)}
+    Ms = sorted(rows); lo = max([m for m in Ms if m <= M], default=Ms[0]); hi = min([m for m in Ms if m >= M], default=Ms[-1])
+    out = None
+    for m in {lo, hi}:
+        if m not in wr: return set()
+        z = {}
+        for j, nm in enumerate(names):
+            e = {'AL26': 'Mg'}.get(nm, re.match(r'[A-Z]+', nm).group(0).capitalize())
+            if e in ELEMS: z[e] = z.get(e, 0.0) + float(rows[m][7 + j]) - float(wr[m][4 + j])
+        zz = {e for e, v in z.items() if v == 0.0}
+        out = zz if out is None else out & zz
+    return out or set()
+
+
 @test
 def no_clipped_negative_ejecta(T):
-    """no element is clipped: every SN and AGB ejecta element of a star that ejects mass is > 0 (every element is
-    present at birth, so an exact 0 is a negative that was clipped), and every lifetime net yield is finite"""
-    bad = []
+    """no element is clipped: no negative SN or AGB ejecta, and every element of a star that ejects mass is > 0 (every
+    element is present at birth, so an exact 0 is a negative that was clipped), except an element a PARSEC v2 explosion
+    holds none of (raw total - wind exactly 0 at the bracketing models)"""
+    bad, neg = [], int((T.SN < 0).sum() + (T.AGB < 0).sum())
+    zero_ok = {}
     for name, ej in (('SN', T.SN), ('AGB', T.AGB)):
         tot = ej.sum(axis=2)
         z = (ej <= 0) & (tot[..., None] > 0) & (T.X[:, None, :] > 0)
         for iz, im, k in zip(*np.where(z)):
+            # a PARSEC v2 explosion that holds none of the element (fully burned) at both neighbouring models: genuine 0
+            if name == 'SN' and T.ys[iz, im] == 4:
+                key = (iz, im)
+                if key not in zero_ok: zero_ok[key] = parsec2_zero_elements(T, iz, im)
+                if ELEMS[k] in zero_ok[key]: continue
             bad.append((name, float(T.Z[iz]), float(T.M[im]), ELEMS[k]))
+    bad += [('negative', None, None, None)] * neg
     c = collections.Counter(b[3] for b in bad)
     return not bad, '%d clipped (kind, Z, M, elem) entries, by element %s; first: %s' % (len(bad), dict(c), bad[:6])
 

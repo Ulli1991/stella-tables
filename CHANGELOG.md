@@ -2,37 +2,53 @@
 
 ## fix/yields-8-14-and-tests (not pinned in GIZMO, not released)
 
-Compared with tables-e3a707a. Content hashes: `stellar_tables_unified.hdf5`
-3d8377d81c85658634ce82f747beef577e92eec570374840ee3d30dbd8982bcf, `stellar_wind_cumulative.hdf5`
-10b18230f18532bc648550d5cac31c5eb2c0a3d3587688ac31e16b0e4945a4d0. Chemistry files unchanged.
+Compared with tables-e3a707a. Content hashes (GIZMO's `scripts/stella_tables_hash.py`): `stellar_tables_unified.hdf5`
+f3bc1b0db57cee58b5ca530a6e99c0eac4d2bbf49d91e223099cb2858b786677, `stellar_wind_cumulative.hdf5`
+1fff3f620561bc2d5c7be9b08119aa0fcb95319304d65f89dd7a467eda1253eb. Chemistry files unchanged. Needs the GIZMO reader of
+stella_dev fix/late-wind-release (elem_ej_wind_total, type_ia_yields per Z); older readers refuse these tables.
 
-- 8-14 Msun yields: Limongi, Chieffi & Roberti 2025 (arXiv:2505.22030) Table 2, every isotope (Mg24-26, Si28-30,
-  Fe54-58, Ni58-64, ...), decayed to the stable isobar (stable set from the NuGrid list; Cl36 and Cu64 branchings);
-  source file in `stellar/data/yields/limongi2025/`. The hand-typed main-isotope values and every NuGrid term are gone:
-  Ni, Zn, K, Mn, Co, Cr, ... came whole from NuGrid's 12-15 Msun models (net Ni 0.021-0.036 per star, about 10x the
-  paper), and NuGrid's mass-cut change with Z was added to the explosive Fe (low-Z Fe 4-8x too high, N negative and
-  clipped in 21 cells).
-- Z dependence below Z_sun: each metal isotope x its Chieffi & Limongi 2018 (set R, v = 0) 13 Msun ratio to [Fe/H] = 0
-  (same code and network; 56Ni stays, secondary N and initial Fe scale); above Z_sun the solar net yields; H closes
-  the paper's ejecta mass.
-- Remnant 8-14 Msun: the paper's mass cut M_init - sum(Table 2), 1.32-1.56 Msun (was the Fe-core mass, and 1.25 for
-  M <= 10). Table 2 includes the wind. The 8-14 Msun net yields now sum to 0 (2e-16; the build log reported
-  1.4e-2 of M_init booked to H before).
-- Massive-star population (M >= 8, Kroupa): [Ni/Fe] -0.03/-0.03/+0.04/+0.11 at Z = 1e-4/1e-3/6e-3/0.014 (was
-  +0.56/+0.82/+0.56/+0.80); [Mg/Fe] +0.37/+0.36/+0.36/+0.34 (was +0.11/+0.27/+0.16/+0.34); [O/Fe] +0.46..+0.52.
-- Late wind (lost after the last alive grid age): leaves between that age and death. The first grid age after death
-  holds the value at which GIZMO's lookup (linear in log age, age clamped at lifetime_yr) reaches the full wind exactly
-  at death; later ages hold the total. v_wind there repeats the last alive value. M_current at the last alive age is
-  the track mass (up to 15 Msun more than before); M_preSN = M_init - all wind. Per-element wind totals unchanged.
+- 8-14 Msun yields: Limongi, Chieffi & Roberti 2025 (arXiv:2505.22030) Table 2, every isotope, decayed to the stable
+  isobar (stable set from the NuGrid list; Cl36 and Cu64 branchings); source file in `stellar/data/yields/limongi2025/`.
+  The hand-typed main-isotope values (Mg, Si, S, Ne, Fe 7-16 % short) and all NuGrid terms are gone: Ni, Zn, K, Mn, Co,
+  Cr came whole from NuGrid 12-15 Msun (net Ni 0.021-0.036 per star, ~10x the paper), and NuGrid's mass-cut change with Z
+  was added to explosive Fe (low-Z Fe 4-8x too high, N negative in 21 cells). Below Z_sun each metal isotope is scaled by
+  its Chieffi & Limongi 2018 (set R, v = 0) 13 Msun ratio to [Fe/H] = 0 (same code and network); above, the solar net
+  yields. Remnant: the paper's mass cut M_init - sum(Table 2), 1.32-1.56 Msun (was the Fe core, and 1.25 for M <= 10).
+- Type Ia: Gronow+2021a,b model M10_03 (1.0 Msun core, 0.03 Msun He shell, double detonation), Z dependent (0.01, 0.1,
+  1, 3 Z_sun, linear in log Z), from the arXiv appendix tables (`stellar/data/yields/gronow2021/`, choice in its README);
+  `type_ia_yields` is now (N_Z, N_elements), 1.04 Msun per event. Replaces the hand-typed W7 vector whose 58Ni had been
+  set by hand ([Ni/Fe] +0.53 per event).
+- PARSEC v2 SN (CCSN, PPISN, PISN): the explosive part comes from the raw total and wind files of the same model
+  (total - wind) instead of total net minus a wind net built with the track's wind mass (49 cells went negative and were
+  clipped). Elements a source destroys (AGB, PARSEC v2 wind and explosion) leave as the source's destroyed fraction of
+  the star's birth content, produced mass is added; H closes the mass (the transfer is recorded per source:
+  AGB KL16 1.1 %, K2010 0.17 %, PARSEC v2 SN 2.5 %, wind 0.9 % of the ejecta at most; the PARSEC v2 models are born with
+  Y = 0.249-0.302, the table with solar He at every Z). Raw elements with exactly 0 in a PARSEC v2 explosion stay 0.
+  The builder no longer clips: a negative element stops the build.
+- Closure: KL16 ejecta fractions in the files sum to 1.005-1.006, renormalised to the expelled mass (this was the 4.5e-3
+  booked to H); elements beyond Zn (KL16, K2010 g sink, Li/Be/B) go to H as X_init counts them. Mass booked to H:
+  KL16 9e-16, Limongi 2e-15 Msun; Karakas 2010 1.6e-5 Msun = its own models' imbalance (sum of all 77 species' net
+  yields), recorded as attributes `closure_residual_*`, `depletion_transfer_to_H_*`. K2010 species decayed to their
+  stable ends (13N -> C, 55Fe -> Mn, ...).
+- Late wind: the wind lost after the last alive grid age leaves between that age and death. The table holds physical
+  cumulative values only: up to the last grid age before death the wind lost so far, after death all wind; new dataset
+  `elem_ej_wind_total` (N_Z, N_M, N_elements). The reader interpolates linearly in log age from the last grid age to the
+  total at lifetime_yr and holds v_wind there (GIZMO fix/late-wind-release). M_current at the last alive age is the
+  track mass (up to 15 Msun more than before); M_preSN = M_init - all wind.
 - Phase transitions: blended only where both tracks reach the phase, else the nearer track; a track stopping at the
   AGB tip starts its post-AGB at its AGB end. 0 transitions out of order (471 before).
+- IMF ratios (Kroupa, M >= 8): [Ni/Fe] -0.03/-0.03/+0.04/+0.11 at Z = 1e-4/1e-3/6e-3/0.014 (was +0.56/+0.82/+0.56/+0.80),
+  [Mg/Fe] +0.37/+0.36/+0.36/+0.34 (was +0.11/+0.27/+0.16/+0.34). Whole population after 13.7 Gyr with Ia: [Ni/Fe]
+  -0.13..+0.02 (was +0.42..+0.44 with W7), [Mn/Fe] -0.06/+0.01, [N/O] +0.11/+0.24 at Z = 6e-3/0.014.
+- Changes against e3a707a: elem_ej_SN_mass (8-14 Msun block; PARSEC v2 SN: up to 6.6 Msun H in the 200 Msun PISN at Z = 5e-4, a Z between PARSEC v2 nodes), elem_ej_AGB_mass
+  (up to 0.05 Msun), remnant_mass (8-14 Msun), M_current (last alive age), M_preSN (last bits), type_ia_yields (shape),
+  phase transitions (142 entries), surface_abundances and elem_ej_wind_cumulative (late wind; destroyed-fraction rule:
+  at Z = 0.04, 0.06, which take the Z = 0.03 PARSEC v2 model, the wind of a 350 Msun star keeps 2.7 instead of 5.7 Msun O
+  and 3 Msun more H; at PARSEC v2 metallicities the wind totals are unchanged); v_wind identical.
 - Tests: `test_yield_ratios.py` (IMF ratios against halo and disc bands, Limongi+2025 against the paper at every Z,
-  8 and 14 Msun seams against the raw sources, clipped ejecta), `phase_transitions_ordered`,
-  `late_wind_follows_raw_track` (replaces the Limongi test that read the builder's own values), `cum_wind at death`.
-  `interp.py` clamps the wind age at each corner's lifetime as GIZMO does.
-- Still failing (reported, not hidden): `imf_population_ratios` [Ni/Fe] +0.42..+0.44 after 13.7 Gyr, from the W7 Ia
-  vector alone ([Ni/Fe]_Ia = +0.53; without Ia -0.01..+0.12); `no_clipped_negative_ejecta`, 49 PARSEC v2 cells at
-  65-500 Msun (SN = total net - wind net with different W).
+  8 and 14 Msun seams against the raw sources, clipped ejecta), `phase_transitions_ordered`, `late_wind_follows_raw_track`,
+  `ia_yields_are_gronow21_m10_03`, `parsec2_sn_is_raw_explosion`, `closure_residuals_at_roundoff`, wind total at death;
+  the wind-composition tests follow the destroyed-fraction rule; `interp.py` follows GIZMO's wind lookup.
 
 ## fix/late-o-ionizing (tables unchanged)
 

@@ -211,9 +211,10 @@ def _p2_rows(path, first):
 
 @test
 def parsec2_sn_is_raw_explosion(t, w, root):
-    """SN ejecta (CCSN, PPISN, PISN) at PARSEC v2 grid points = the raw explosive part (total - wind file; an isotope
-    unfilled in the wind file only: the total holds the explosion part; unfilled in both: initial fraction) as mass
-    fractions times the explosive ejecta M_preSN - M_bar, plus the birth composition times M_bar - M_rem; rel 1e-9"""
+    """SN ejecta (CCSN, PPISN, PISN) at PARSEC v2 grid points from the raw explosive part (total - wind file; an isotope
+    unfilled in the wind file only: the total holds the explosion part; unfilled in both: initial fraction): per unit
+    explosive mass r = x - X_PARSEC,init; ejecta = X_init (M_preSN - M_rem) + (max(r, 0) - X_init max(-r, 0) / X_PARSEC,init)
+    (M_preSN - M_bar), H the rest (explosive mass capped at M_preSN - M_rem); rel 1e-9"""
     Zt, Mt, rt, rm, Mp = t['Z'][()], t['M_init'][()], t['remnant_type'][()], t['remnant_mass'][()], t['M_preSN'][()]
     SN, X = t['elem_ej_SN_mass'][()], t['X_init'][()]
     worst, n = (0., None), 0
@@ -236,20 +237,65 @@ def parsec2_sn_is_raw_explosion(t, w, root):
                 elif vw == 0.0 and x > 0: v = vt                      # total holds the explosion part only
                 else: v = vt - vw
                 E[ELEMS.index(e)] += v
-            want = E / E.sum() * (Mp[iz, im] - Mbar) + X[iz] * (Mbar - rm[iz, im])
-            e = np.max(np.abs(SN[iz, im] - want) / np.maximum(want, 1e-12 * M)); n += 1
-            if e > worst[0]: worst = (e, (Zp, M, ELEMS[int(np.argmax(np.abs(SN[iz, im] - want) / np.maximum(want, 1e-12 * M)))]))
+            X0 = np.zeros(len(ELEMS))
+            for nm, x in zip(nt, x0):
+                e = {'AL26': 'Mg'}.get(nm, re.match(r'[A-Z]+', nm).group(0).capitalize())
+                if e in ELEMS: X0[ELEMS.index(e)] += x
+            r = E / E.sum() - X0
+            Pp, Dd = np.maximum(r, 0.0), np.where((r < 0) & (X0 > 0), -r / np.where(X0 > 0, X0, 1.0), 0.0)
+            mx = min(max(Mp[iz, im] - Mbar, 0.0), Mp[iz, im] - rm[iz, im]); mb = Mp[iz, im] - rm[iz, im] - mx
+            want = X[iz] * (mx + mb) + (Pp - Dd * X[iz]) * mx
+            want[0] = Mp[iz, im] - rm[iz, im] - want[1:].sum()
+            d = np.abs(SN[iz, im] - want) / (np.maximum(want, 0.0) + 1e-12 * M); n += 1
+            if d.max() > worst[0]: worst = (d.max(), (Zp, M, ELEMS[int(np.argmax(d))]))
     return n > 0 and worst[0] < 1e-9, '%d PARSEC v2 SN models; worst rel |table - raw explosion| = %.2e at (Z, M, elem) = %s' % (n, worst[0], worst[1])
 
 
 @test
 def closure_residuals_at_roundoff(t, w, root):
-    """mass booked to H to close each star's ejecta (before the closure: |sum of ejecta - ejected mass| / M_init,
-    recorded by the builder per source) is round-off for every source"""
+    """mass booked to H to close each star's ejecta, recorded by the builder per source in Msun (before the closure,
+    max |sum of ejecta - ejected mass|): round-off (< 1e-10 Msun) for every source except Karakas 2010, whose own models
+    do not close (sum over all 77 species of a model's net yields != 0); there it must not exceed the largest such
+    raw imbalance. The destroyed-fraction transfer to H (per ejecta / wind mass) must not exceed the sources' largest
+    birth-composition offset from X_init (He: PARSEC v2 Y = 0.2487..0.302, KL16 Y, against solar He at every Z)"""
     keys = [k for k in t.attrs if k.startswith('closure_residual_')]
     if not keys: return False, 'no closure_residual_* attributes'
     vals = {k[len('closure_residual_'):]: float(t.attrs[k]) for k in keys}
-    return all(v < 1e-12 for v in vals.values()), ', '.join('%s %.2e' % kv for kv in sorted(vals.items()))
+    raw = {}
+    for tf in ('tablea2.dat', 'tablea3.dat', 'tablea4.dat', 'tablea5.dat'):
+        for ln in open(os.path.join(root, 'karakas2010', tf)):
+            if not ln.strip(): continue
+            key = (float(ln[0:4]), float(ln[5:11]), float(ln[12:17]))
+            if key == (6.0, 0.0001, 1.008): continue
+            raw[key] = raw.get(key, 0.0) + float(ln[34:48])
+    k10 = max(abs(v) for v in raw.values())
+    bad = [k for k, v in vals.items() if v > (k10 * (1 + 1e-9) if k == 'Karakas2010' else 1e-10)]
+    # AGB, PARSEC v2 SN ejecta and winds: an element the source destroys leaves as that fraction of the star's own birth
+    # content, the burned-fuel difference to the source's destroyed mass is H by design
+    tr = {k[len('depletion_transfer_to_H_'):]: float(t.attrs[k]) for k in t.attrs if k.startswith('depletion_transfer_to_H_')}
+    # bound: the largest birth-composition offset of the sources against X_init at the same Z, |Y_src - X_He| plus the
+    # metals' |X0 - X_init| (PARSEC v2 file headers, KL16 model headers); destroyed fractions are <= 1
+    Zt, X = t['Z'][()], t['X_init'][()]; offs = []
+    for zd in glob(os.path.join(root, 'parsec2_vms', 'ejecta_Z*')):
+        Zp = float(re.search(r'ejecta_Z([\d.Ee-]+)', zd).group(1)); iz = np.where(np.isclose(Zt, Zp, rtol=1e-9))[0]
+        if not iz.size: continue
+        nt, x0, _ = _p2_rows(glob(os.path.join(zd, '*total_ejecta.dat'))[0], 7)
+        X0 = np.zeros(len(ELEMS))
+        for nm, x in zip(nt, x0):
+            e = {'AL26': 'Mg'}.get(nm, re.match(r'[A-Z]+', nm).group(0).capitalize())
+            if e in ELEMS: X0[ELEMS.index(e)] += x
+        offs.append(np.abs(X0[1:] - X[iz[0], 1:]).sum())
+    for zs, Z in (('007', 0.007), ('014', 0.014), ('03', 0.03)):
+        iz = np.where(np.isclose(Zt, Z))[0]
+        if not iz.size: continue
+        for blk in open(os.path.join(root, 'karakas_lugaro2016', 'yields', 'yield_z%s.dat' % zs)).read().split('# Initial mass')[1:2]:
+            Y = float(re.search(r'Y =\s+([\d.]+)', blk).group(1)); offs.append(abs(Y - X[iz[0], 1]) + Z)
+    bound = max(offs)
+    bad += ['transfer ' + k for k, v in tr.items() if v > bound]
+    msg = (', '.join('%s %.2e Msun' % kv for kv in sorted(vals.items())) +
+           '; Karakas 2010 raw max |sum of all net yields| %.2e Msun; depletion transfer to H, max of the ejecta/wind: %s '
+           '(bound from the sources\' birth-composition offsets %.3f)' % (k10, ', '.join('%s %.2e' % kv for kv in sorted(tr.items())), bound))
+    return not bad and 'Karakas2010' in vals and {'wind', 'PARSEC2_SN', 'KL16', 'Karakas2010'} <= set(tr), msg
 
 
 @test

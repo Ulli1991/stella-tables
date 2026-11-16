@@ -1332,8 +1332,9 @@ def find_boost_grid_for_Z(Z):
 
 
 def load_boost_wind_dx(boost_dir):
-    """Wind enrichment per unit wind mass of the non-rotating BoOST tracks: Σ X_surf dM / Σ dM - X_surf(0) per element
-    (elements without a BoOST surface column: 0, i.e. birth composition). Returns {grid: (masses, dx[nM, N_ELEM])}."""
+    """Wind enrichment per unit wind mass of the non-rotating BoOST tracks, dx = Σ X_surf dM / Σ dM - X_surf(0) per
+    element, as [max(dx, 0), destroyed fraction max(-dx, 0) / X_surf(0), max(-dx, 0)] (elements without a BoOST surface
+    column: 0). Returns {grid: (masses, rows[nM, 3 N_ELEM])}."""
     out = {}
     for grid in BOOST_GRIDS:
         Ms, dxs = [], []
@@ -1349,8 +1350,10 @@ def load_boost_wind_dx(boost_dir):
             if dM.sum() <= 0:
                 continue
             dx = (0.5 * (s[:-1] + s[1:]) * dM[:, None]).sum(axis=0) / dM.sum() - s[0]
-            dx[TRACKED_ELEMENTS.index('H')] -= dx.sum()   # the elements BoOST lacks stay at birth fraction
-            Ms.append(float(re.match(r'f(\d+)-', os.path.basename(f)).group(1))); dxs.append(dx)
+            # produced part and destroyed fraction of the initial surface content (elements BoOST lacks: 0, 0)
+            pd = np.concatenate([np.maximum(dx, 0.0), np.where((dx < 0) & (s[0] > 0), -dx / np.where(s[0] > 0, s[0], 1.0), 0.0),
+                                 np.maximum(-dx, 0.0)])
+            Ms.append(float(re.match(r'f(\d+)-', os.path.basename(f)).group(1))); dxs.append(pd)
         if Ms:
             o = np.argsort(Ms); out[grid] = (np.array(Ms)[o], np.array(dxs)[o])
     return out
@@ -1874,28 +1877,6 @@ ISOTOPE_TO_ELEMENT_CL = {
     'Ni56': 'Fe',
 }
 
-ISOTOPE_TO_ELEMENT_KAR = {
-    'p': 'H', 'd': 'H',
-    'he3': 'He', 'he4': 'He',
-    'c12': 'C', 'c13': 'C', 'c14': 'C',
-    'n13': 'N', 'n14': 'N', 'n15': 'N',
-    'o14': 'O', 'o15': 'O', 'o16': 'O', 'o17': 'O', 'o18': 'O', 'o19': 'O',
-    'f17': 'F', 'f18': 'F', 'f19': 'F', 'f20': 'F',
-    'ne19': 'Ne', 'ne20': 'Ne', 'ne21': 'Ne', 'ne22': 'Ne', 'ne23': 'Ne',
-    'na21': 'Na', 'na22': 'Na', 'na23': 'Na', 'na24': 'Na',
-    'mg23': 'Mg', 'mg24': 'Mg', 'mg25': 'Mg', 'mg26': 'Mg', 'mg27': 'Mg',
-    'al*6': 'Mg', 'al-6': 'Mg', 'al26': 'Mg',   # 26Al (t1/2 0.72 Myr; isomer 6 s) -> 26Mg
-    'al25': 'Al', 'al27': 'Al', 'al28': 'Al',
-    'si27': 'Si', 'si28': 'Si', 'si29': 'Si', 'si30': 'Si', 'si31': 'Si', 'si32': 'Si', 'si33': 'Si',
-    'p29': 'P', 'p30': 'P', 'p31': 'P', 'p32': 'P', 'p33': 'P', 'p34': 'P',
-    's32': 'S', 's33': 'S', 's34': 'S', 's35': 'S',
-    'ca40': 'Ca', 'ca42': 'Ca', 'ca43': 'Ca', 'ca44': 'Ca',
-    'ti46': 'Ti', 'ti48': 'Ti',
-    'fe54': 'Fe', 'fe55': 'Fe', 'fe56': 'Fe', 'fe57': 'Fe', 'fe58': 'Fe',
-    'fe59': 'Fe', 'fe60': 'Fe', 'fe61': 'Fe',
-    'co59': 'Co', 'co60': 'Co', 'co61': 'Co',
-    'ni56': 'Fe', 'ni58': 'Ni', 'ni59': 'Ni', 'ni60': 'Ni', 'ni61': 'Ni', 'ni62': 'Ni',
-}
 
 
 def load_CL18_yields(cl_dir):
@@ -1938,9 +1919,9 @@ def load_CL18_yields(cl_dir):
     return elem_yields, fehs, CL_MASSES, presn
 
 
-def load_karakas_yields(kar_dir):
-    """Load Karakas 2010 AGB yields."""
-    elem_yields = {}
+def load_karakas_yields(kar_dir, st):
+    """Load Karakas 2010 AGB net yields and initially present masses per tracked element (st: stable isobars)."""
+    elem_yields, elem_init = {}, {}
     wd_masses = {}
     for table_file in ['tablea2.dat', 'tablea3.dat', 'tablea4.dat', 'tablea5.dat']:
         path = os.path.join(kar_dir, table_file)
@@ -1957,12 +1938,33 @@ def load_karakas_yields(kar_dir):
                     continue   # Reimers mass-loss variant of the VW93 model (ReadMe note 1); VW93 as for every other model
                 iso = line[21:25].strip().lower()
                 net_yield = float(line[34:48])
+                m_init = float(line[64:78])   # mass of the species initially present in the ejecta
                 wd_masses[(Z0, M0)] = M_final
-                elem = ISOTOPE_TO_ELEMENT_KAR.get(iso)
-                if elem and elem in TRACKED_ELEMENTS:
-                    key = (Z0, M0, elem)
-                    elem_yields[key] = elem_yields.get(key, 0.0) + net_yield
-    return elem_yields, wd_masses
+                # each species decayed to its stable end; untracked ones (Li, Be, B, the g sink 64Ni..Bi) to H, as
+                # X_init counts them
+                for k, br in _kar2010_species_to_tracked(iso, st).items():
+                    key = (Z0, M0, TRACKED_ELEMENTS[k])
+                    elem_yields[key] = elem_yields.get(key, 0.0) + br * net_yield
+                    elem_init[key] = elem_init.get(key, 0.0) + br * m_init
+    return elem_yields, wd_masses, elem_init
+
+
+def _kar2010_species_to_tracked(iso, st):
+    """{tracked element index: fraction} of a Karakas 2010 species after decay; untracked products -> H"""
+    special = {'p': (1, 1), 'd': (1, 2), 'n': (0, 1), 'al*6': (13, 26), 'al-6': (13, 26)}
+    if iso == 'g':
+        return {0: 1.0}
+    if iso == 'b8':                      # 8B -> 8Be -> 2 alpha
+        return {TRACKED_ELEMENTS.index('He'): 1.0}
+    if iso in special:
+        Zn, A = special[iso]
+    else:
+        m = re.match(r'([a-z]+)(\d+)$', iso); Zn, A = NUC_Z[m.group(1)], int(m.group(2))
+    out = decay_to_tracked(Zn, A, st)
+    rest = 1.0 - sum(out.values())
+    if rest > 0:
+        out[0] = out.get(0, 0.0) + rest
+    return out
 
 
 # K&L 2016: map (element_name, atomic_number) → our tracked element
@@ -1999,7 +2001,7 @@ def load_kl2016_yields(kl_dir):
         elif M < 5.0: return 1e-4
         else: return 0.0
 
-    elem_yields = {}
+    elem_yields, elem_init = {}, {}
     wd_masses = {}
 
     for zfile in ['yield_z007.dat', 'yield_z014.dat', 'yield_z03.dat']:
@@ -2039,10 +2041,13 @@ def load_kl2016_yields(kl_dir):
                         # Key by (element_name, atomic_number) to distinguish
                         # p/1 (hydrogen) from p/15 (phosphorus)
                         k = (parts[0].lower(), int(parts[1]))
-                        elems[k] = float(parts[6])
+                        elems[k] = float(parts[6])   # Mass(i) = X(i) M_expelled; the X(i) sum to 1.005-1.006 in the files
                         if k[1] > 2:   # initial metal pattern: X(i) 10^-[X/H] (ejecta abundance back to the start)
                             x0pat[k] = float(parts[5]) * 10**(-float(parts[3]))
                     i += 1
+                # the files' mass fractions X(i) sum to 1.005-1.006: renormalise so the masses sum to M_expelled
+                fsum = math.fsum(elems.values())
+                elems = {k: v * M_expelled / fsum for k, v in elems.items()}
                 # Ca is not processed in AGB stars: it fixes the pattern's scale, i.e. Ca net yield 0
                 ca = elems[('ca', 20)] / (M_expelled * x0pat[('ca', 20)])
                 x0 = {k: v * ca for k, v in x0pat.items()}
@@ -2083,8 +2088,15 @@ def load_kl2016_yields(kl_dir):
                 net = mass_expelled - X_init * M_exp
                 key = (Z, M, our_el)
                 elem_yields[key] = elem_yields.get(key, 0.0) + net
+                elem_init[key] = elem_init.get(key, 0.0) + X_init * M_exp
+            # elements beyond the tracked ones (Li, Be, B, Ga..Bi): net yield to H, as X_init counts them
+            untracked = math.fsum(v - mod['x0'].get(k, 0.0) * M_exp for k, v in mod['elems'].items()
+                                  if k not in KL16_ELEM_MAP)
+            elem_yields[(Z, M, 'H')] = elem_yields.get((Z, M, 'H'), 0.0) + untracked
+            elem_init[(Z, M, 'H')] = elem_init.get((Z, M, 'H'), 0.0) + M_exp * math.fsum(
+                v for k, v in mod['x0'].items() if k not in KL16_ELEM_MAP)
 
-    return elem_yields, wd_masses
+    return elem_yields, wd_masses, elem_init
 
 
 def _parse_parsec2_init_comp(ejecta_dir):
@@ -2495,79 +2507,109 @@ def reclassify_with_cores(rem_type, rem_mass, M_He_core, M_CO_core, M_preSN, M_g
 # Type Ia SN yields and DTD
 # ═══════════════════════════════════════════════════════════════
 
-def get_type_ia_yields():
-    """
-    Type Ia SN yields from W7 model (Iwamoto+ 1999).
-    Complete disruption of Chandrasekhar-mass C/O WD.
-    Returns dict: element → yield in Msun.
+IA_MODEL = 'M10_03'   # Gronow+2021: 1.0 Msun CO core, 0.03 Msun He shell (stellar/data/yields/gronow2021/README)
+IA_Z_NODES = np.array([0.01, 0.1, 1.0, 3.0])   # Z / Z_sun of the model's yields
 
-    Dropped-58Ni restored (Uli decision 2026-07-28): the original
-    27-element transcription summed to 1.2999999704 Msun, not the full
-    W7 ejecta mass of 1.378 Msun (= TYPE_IA_DTD['ejecta_mass_Msun'] =
-    the C code's IA_EJECTA_MASS). The 0.0780000296 Msun deficit was
-    traced to the Ni entry: the transcription had Ni = 0.0622 while the
-    true W7 elemental Ni (58Ni + 60Ni, Iwamoto+99) is ~0.14 — the 58Ni
-    contribution had been dropped. Fix: the missing mass is attributed
-    entirely to Ni (0.0622 + 0.0780000296 = 0.1402000296); every other
-    element keeps its original W7 transcription value (Fe stays 0.744),
-    and the dict sums to exactly 1.378 Msun as the C-side injector
-    (resolvedism_fb_thermal.cc) assumes when it rescales the vector by
-    Mej_actual/IA_EJECTA_MASS.
-    """
-    return {
-        'H':  0.0,
-        'He': 0.0,
-        'C':  0.0486,
-        'N':  1.2e-6,   # trace
-        'O':  0.143,
-        'F':  4.0e-10,  # negligible
-        'Ne': 0.00429,
-        'Na': 5e-5,
-        'Mg': 0.00885,
-        'Al': 9e-4,
-        'Si': 0.156,
-        'P':  3.1e-4,   # W7 model
-        'S':  0.0864,
-        'Cl': 1.3e-4,   # W7 model
-        'Ar': 0.0150,   # W7 model
-        'K':  6.3e-5,   # W7 model
-        'Ca': 0.0126,
-        'Sc': 1.7e-7,   # trace
-        'Ti': 3.6e-4,
-        'V':  4.7e-5,   # W7 model
-        'Cr': 0.00876,  # W7 model (significant iron-peak)
-        'Mn': 0.00763,  # W7 model (significant iron-peak)
-        'Fe': 0.744,    # includes 56Ni → 56Fe decay
-        'Co': 7.9e-4,   # W7 model
-        'Ni': 0.1402000296,  # 58Ni+60Ni; dropped-58Ni restored (was 0.0622,
-                             # + 0.0780000296 missing mass -> Sum = 1.378
-                             # exactly; Uli decision 2026-07-28)
-        'Cu': 2.6e-6,   # trace
-        'Zn': 1.6e-5,   # W7 model
-    }
 
-TYPE_IA_DTD = {
-    't_min_Myr': 40.0,           # minimum delay time
-    'slope': -1.0,               # P(t) ∝ t^slope for t > t_min
-    'rate_per_Msun': 1.3e-3,     # Ia per Msun of stars formed (Maoz & Mannucci 2012)
-    'E_SN_erg': 1.0e51,          # explosion energy
-    'ejecta_mass_Msun': 1.378,   # total ejecta (Chandrasekhar mass WD)
-}
+def _gronow_table(path, label):
+    """{(element, A): [values]} of the stable-yield table whose caption contains label (to the next caption)"""
+    L = open(path).read().splitlines()
+    i = next(k for k, l in enumerate(L) if label in l and '\\caption{' in l)
+    rows = {}
+    for l in L[i + 1:]:
+        if '\\caption{' in l:
+            break
+        m = re.match(r'\$\^\{(\d+)\}\$([A-Za-z]+)\s*&(.*)\\\\', l.strip())
+        if m:
+            rows[(m.group(2), int(m.group(1)))] = [float(x) for x in m.group(3).split('&')]
+    return rows
 
-# ═══════════════════════════════════════════════════════════════
-# Magnetar prescription (parametric, for C code)
-# ═══════════════════════════════════════════════════════════════
 
-MAGNETAR_PARAMS = {
-    'description': 'Parametric magnetar channel: fraction of NS-forming CCSNe produce magnetars',
-    'f_mag_base': 0.10,       # base magnetar fraction (~10% of NS births)
-    'mass_boost_exp': 0.5,    # f_mag scales as (M/20)^exp for M > 20 Msun
-    'Z_boost_exp': -0.3,      # f_mag scales as (Z/Zsun)^exp (more magnetars at low Z)
-    'E_total_erg': 1e52,      # fixed total energy for magnetar SN (SN + spindown combined)
-    'note': 'Magnetar SN: E_total = 1e52 erg (flat). No separate spindown — '
-            'deposited at SN time. Low Z → more magnetars. '
-            'Without rotating tracks this is a statistical prescription.',
-}
+def get_type_ia_yields(gronow_dir, Z_grid):
+    """Type Ia ejecta per element [Msun per event], (N_Z, N_ELEM): Gronow+2021 M10_03, He-shell + core detonation,
+    asymptotic stable nuclides; 1 Zsun from Gronow+21a, 0.01, 0.1, 3 Zsun from Gronow+21b; linear in log Z between,
+    clamped outside. Nuclides beyond Zn are not tracked."""
+    a = _gronow_table(os.path.join(gronow_dir, 'gronow21a_appendix_table_stable.tex'), 'Models M10\\_10, M010\\_05')
+    b = _gronow_table(os.path.join(gronow_dir, 'gronow21b_appendix_table_stable.tex'), 'Model M10\\_03 with 0.01')
+    def vec(rows, pair):
+        v = np.zeros(N_ELEM)
+        for (e, A), x in rows.items():
+            if e in TRACKED_ELEMENTS:
+                v[TRACKED_ELEMENTS.index(e)] += x[2 * pair] + x[2 * pair + 1]
+        return v
+    nodes = [vec(b, 0), vec(b, 1), vec(a, 2), vec(b, 2)]   # 21a columns: M10_10, M10_05, M10_03, ...
+    lz = np.log10(IA_Z_NODES)
+    out = np.zeros((len(Z_grid), N_ELEM))
+    for iz, Z in enumerate(Z_grid):
+        x = float(np.clip(np.log10(Z / Z_SOLAR), lz[0], lz[-1]))
+        out[iz] = [np.interp(x, lz, [v[k] for v in nodes]) for k in range(N_ELEM)]
+    return out
+
+def load_parsec2_explosion(ejecta_dir):
+    """PARSEC v2 explosive ejecta per model from the raw total and wind files: {(Z, M): ([produced part, destroyed
+    fraction of the model's birth content, destroyed mass] per unit explosive mass and tracked element, M_bar, M_fin,
+    SN type string)}. Per isotope column: total - wind; a column the wind file leaves unfilled
+    (0 although present at birth) while the total has it: the total holds the explosion part only; unfilled in both:
+    the birth fraction of the explosive ejecta M_fin - M_bar. The columns' sum differs from M_fin - M_bar by up to
+    0.2 % of M_init (the explosive yields are grafted on PARSEC's cores, Costa+25): the composition is kept, the mass is
+    M_fin - M_bar. 26Al -> Mg; Li7, Be7 are not tracked."""
+    out = {}
+    for zdir in sorted(glob(os.path.join(ejecta_dir, 'ejecta_Z*'))):
+        Z = float(re.search(r'ejecta_Z([\d.Ee-]+)', zdir).group(1))
+        tf, wf = glob(os.path.join(zdir, '*total_ejecta.dat')), glob(os.path.join(zdir, '*winds_ejecta.dat'))
+        if not tf or not wf:
+            continue
+        L, W = open(tf[0]).read().splitlines(), open(wf[0]).read().splitlines()
+        names = L[3].split()[7:]
+        tok = L[1].replace('#', '').split(); x0 = [float(v) for v in tok[-len(names):]]
+        X0 = np.zeros(N_ELEM)
+        for nm, x in zip(names, x0):
+            e = 'Mg' if nm == 'AL26' else re.match(r'[A-Z]+', nm).group(0).capitalize()
+            if e in TRACKED_ELEMENTS:
+                X0[TRACKED_ELEMENTS.index(e)] += x
+        wrows = {float(l.split()[0]): l.split() for l in W[4:] if len(l.split()) >= 4 + len(names)}
+        for line in L[4:]:
+            p = line.split()
+            if len(p) < 7 + len(names):
+                continue
+            M = float(p[0]); Mfin, Mbar = float(p[1]), float(p[5])
+            if M not in wrows or p[6] not in ('CCSN', 'PPISN', 'PISN'):
+                continue
+            E = np.zeros(N_ELEM)
+            for j, (nm, x) in enumerate(zip(names, x0)):
+                e = 'Mg' if nm == 'AL26' else re.match(r'[A-Z]+', nm).group(0).capitalize()
+                if e not in TRACKED_ELEMENTS:
+                    continue
+                vt, vw = float(p[7 + j]), float(wrows[M][4 + j])
+                if vt == 0.0 and x > 0:
+                    v = x * (Mfin - Mbar)
+                elif vw == 0.0 and x > 0:
+                    v = vt
+                else:
+                    v = vt - vw
+                E[TRACKED_ELEMENTS.index(e)] += v
+            if (E < 0).any():
+                raise ValueError('PARSEC v2 Z=%g M=%g: total < wind for %s' % (Z, M, [TRACKED_ELEMENTS[k] for k in np.where(E < 0)[0]]))
+            e = E / math.fsum(E); r = e - X0
+            # per unit explosive mass: produced part, destroyed fraction of the birth content, destroyed mass
+            pda = np.concatenate([np.maximum(r, 0.0), np.where((r < 0) & (X0 > 0), -r / np.where(X0 > 0, X0, 1.0), 0.0),
+                                  np.maximum(-r, 0.0)])
+            out[(Z, M)] = (pda, Mbar, Mfin, p[6])
+    return out
+
+
+def _interp_p2_explosion(p2_expl, Z_p2, M, p2_Ms):
+    """explosive mass fractions and M_bar at mass M, bracketed as _interp_p2_yields: linear in M between the two
+    neighbouring models when both explode with the same type, else the nearest model (None if it does not explode)"""
+    if M <= p2_Ms[0] or M >= p2_Ms[-1]:
+        d = p2_expl.get((Z_p2, p2_Ms[0] if M <= p2_Ms[0] else p2_Ms[-1]))
+        return None if d is None else (d[0], d[1])
+    j = int(np.searchsorted(p2_Ms, M)) - 1; f = (M - p2_Ms[j]) / (p2_Ms[j + 1] - p2_Ms[j])
+    a, b = p2_expl.get((Z_p2, p2_Ms[j])), p2_expl.get((Z_p2, p2_Ms[j + 1]))
+    if a is not None and b is not None and a[3] == b[3]:
+        return (1 - f) * a[0] + f * b[0], (1 - f) * a[1] + f * b[1]
+    d = a if f < 0.5 else b
+    return None if d is None else (d[0], d[1])
 
 
 def _interp_p2_yields(p2_ejecta, Z_p2, M, p2_Ms, init_comp):
@@ -2676,20 +2718,22 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
     """
     # Load all yield sources
     print("  Loading Karakas 2010 AGB yields...", flush=True)
-    kar_yields, kar_wd = load_karakas_yields(os.path.join(base_dir, 'karakas2010'))
+    st_iso = stable_isobars(os.path.join(base_dir, 'nugrid'))
+    kar_yields, kar_wd, kar_init = load_karakas_yields(os.path.join(base_dir, 'karakas2010'), st_iso)
 
     # Load K&L 2016 and merge (K&L 2016 preferred for Z >= 0.007)
     kl16_dir = os.path.join(base_dir, 'karakas_lugaro2016', 'yields')
     if os.path.isdir(kl16_dir):
         print("  Loading Karakas & Lugaro 2016 AGB yields (Z=0.007,0.014,0.03)...",
               flush=True)
-        kl16_yields, kl16_wd = load_kl2016_yields(kl16_dir)
+        kl16_yields, kl16_wd, kl16_init = load_kl2016_yields(kl16_dir)
         n_kl16 = len(set((k[0], k[1]) for k in kl16_yields))
         print(f"    {n_kl16} (Z, M) grid points from K&L 2016", flush=True)
         # Merge: K&L 2016 overwrites K2010 at overlapping Z
         # KL16 replaces K2010 from Z = 0.007 up (K2010 Z = 0.008, 0.02 dropped)
         kar_yields = {k: v for k, v in kar_yields.items() if k[0] < 0.007}
-        kar_yields.update(kl16_yields)
+        kar_init = {k: v for k, v in kar_init.items() if k[0] < 0.007}
+        kar_yields.update(kl16_yields); kar_init.update(kl16_init)
         kar_wd.update(kl16_wd)
     else:
         print("  WARNING: K&L 2016 data not found, using K2010 only", flush=True)
@@ -2699,6 +2743,7 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
 
     print("  Loading PARSEC v2 VMS ejecta (for remnants + PISN yields)...", flush=True)
     p2_ejecta = load_parsec2_ejecta(os.path.join(base_dir, 'parsec2_vms'))
+    p2_expl = load_parsec2_explosion(os.path.join(base_dir, 'parsec2_vms'))
     p2_Zs = sorted(set(k[0] for k in p2_ejecta.keys()))
     p2_init_comp = _parse_parsec2_init_comp(os.path.join(base_dir, 'parsec2_vms'))
 
@@ -2709,7 +2754,6 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
     print("  Loading Limongi+2025 Table 2 (8-14 Msun) and C&L 2018 13 Msun isotopes (its Z dependence)...", flush=True)
     lim25 = load_limongi25(os.path.join(base_dir, 'limongi2025'))
     lc18_13 = load_lc18_iso_13(os.path.join(base_dir, 'chieffi_limongi2018'))
-    st_iso = stable_isobars(os.path.join(base_dir, 'nugrid'))
     print("    mass cut M_init - sum(Table 2): " + ", ".join(f"{m:g}: {c:.3f}" for m, c in zip(LIM25_MASSES, lim25[1])))
 
     print("  Loading C&L 2018 yields + pre-SN data...", flush=True)
@@ -2722,6 +2766,10 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
     rem_type = np.zeros((N_Z, N_M), dtype=int)
     rem_mass = np.zeros((N_Z, N_M))
     yield_src = np.zeros((N_Z, N_M), dtype=int)
+    agb_P = np.zeros((N_Z, N_M, N_ELEM))   # AGB produced mass (positive net yields, interpolated)
+    agb_D = np.zeros((N_Z, N_M, N_ELEM))   # AGB destroyed fraction of the initially present mass (interpolated)
+    sn_frac = np.full((N_Z, N_M, 3 * N_ELEM), np.nan)   # PARSEC v2 explosive part per unit mass (CCSN, PPISN, PISN)
+    m_bar = np.full((N_Z, N_M), np.nan)             # PARSEC v2 baryonic remnant mass of those
     # yield_src: 0=none, 1=Karakas_AGB, 2=Limongi25 (C&L 2018 Z ratios), 3=CL18(unused), 4=PARSEC_v2
 
     n_src = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
@@ -2757,13 +2805,15 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
                     yield_src[iz, im] = 1
                     for ie, elem in enumerate(TRACKED_ELEMENTS):
                         for Zk, wk in kar_w:
-                            pairs = [(km, kar_yields[(Zk, km, elem)])
-                                     for km in kar_M if (Zk, km, elem) in kar_yields]
-                            if pairs:
-                                m_a = np.array([p[0] for p in pairs])
-                                y_a = np.array([p[1] for p in pairs])
-                                yields[iz, im, ie] += wk * np.interp(
-                                    M, m_a, y_a, left=y_a[0], right=y_a[-1])
+                            keys = [km for km in kar_M if (Zk, km, elem) in kar_yields]
+                            if keys:
+                                m_a = np.array(keys)
+                                y_a = np.array([kar_yields[(Zk, km, elem)] for km in keys])
+                                i_a = np.array([kar_init.get((Zk, km, elem), 0.0) for km in keys])
+                                d_a = np.where((y_a < 0) & (i_a > 0), -y_a / np.where(i_a > 0, i_a, 1.0), 0.0)
+                                yields[iz, im, ie] += wk * np.interp(M, m_a, y_a, left=y_a[0], right=y_a[-1])
+                                agb_P[iz, im, ie] += wk * np.interp(M, m_a, np.maximum(y_a, 0.0), left=max(y_a[0], 0.0), right=max(y_a[-1], 0.0))
+                                agb_D[iz, im, ie] += wk * np.interp(M, m_a, np.minimum(d_a, 1.0), left=min(d_a[0], 1.0), right=min(d_a[-1], 1.0))
                 # AGB: no wind injection in code (M<8 skipped), full Karakas yields at death
                 # wind_yields stays 0 so sn_yield = net_yield = full Karakas yields
                 n_src[yield_src[iz, im]] += 1
@@ -2793,6 +2843,11 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
             if result is not None:
                 net_y, p2_rem_mass, p2_rem_type = result
                 rem_type[iz, im] = p2_rem_type
+                if p2_rem_type in (2, 4, 5):
+                    ex = _interp_p2_explosion(p2_expl, Z_p2, M, p2_Ms)
+                    if ex is None:
+                        raise ValueError('PARSEC v2 Z=%g M=%g: type %d without an explosive model' % (Z_p2, M, p2_rem_type))
+                    sn_frac[iz, im], m_bar[iz, im] = ex
                 rem_mass[iz, im] = p2_rem_mass
 
                 # FSN/DBH: no explosion, yields stay zero (wind handled separately)
@@ -2827,7 +2882,7 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
     print(f"  Yield sources: Karakas={n_src[1]}, Limongi25={n_src[2]}, "
           f"CL18={n_src[3]}, PARSEC_v2={n_src[4]}, none={n_src[0]}")
 
-    return yields, wind_yields, rem_type, rem_mass, yield_src
+    return yields, wind_yields, rem_type, rem_mass, yield_src, sn_frac, m_bar, agb_P, agb_D
 
 
 def scale_yields_for_fallback(yields, rem_type, rem_mass, M_preSN, M_grid, yield_src=None):
@@ -2865,7 +2920,8 @@ WIND_DX_BLEND = (12.0, 14.0)  # BoOST -> PARSEC v2 wind enrichment, linear in lo
 
 
 def build_wind_dx(Z_grid, M_grid, base_dir):
-    """Wind enrichment per unit wind mass, dx[iz, im, k] = X_wind,k - X_birth,k of the source star, for M >= 8.
+    """Wind enrichment per unit wind mass of the source star, X_wind,k - X_birth,k, for M >= 8, as dx[iz, im] =
+    [produced part max(., 0), destroyed fraction of the birth content, destroyed mass max(-., 0)] per element.
     PARSEC v2 wind ejecta (all 27 elements) for M >= 14 at the nearest PARSEC v2 Z, linear in M between its masses;
     below 14 BoOST (non-rotating, Na..Fe surface columns), log-Z interpolated between its grids, blended in log M over
     WIND_DX_BLEND into PARSEC v2 at 14 Msun; above the BoOST metallicities (Z > 2 Z_MW) PARSEC v2 at 14 Msun.
@@ -2877,18 +2933,19 @@ def build_wind_dx(Z_grid, M_grid, base_dir):
     p2_Zs = sorted(set(z for z, _ in p2_wind))
     bg = sorted((BOOST_GRIDS[g], g) for g in boost)
     N_Z, N_M = len(Z_grid), len(M_grid)
-    dx = np.zeros((N_Z, N_M, N_ELEM)); w_p2 = np.full((N_Z, N_M), np.nan)
+    dx = np.zeros((N_Z, N_M, 3 * N_ELEM)); w_p2 = np.full((N_Z, N_M), np.nan)
 
     def p2_dx(Zp, M):
         Ms = np.array(sorted(m for z, m in p2_wind if z == Zp))
         rows = []
         for m in Ms:
             d = p2_wind[(Zp, m)]; Wp = m - d['M_fin']
-            r = np.array([d['yields'].get(e, 0.0) / Wp - p2_x0[Zp].get(e, 0.0) for e in TRACKED_ELEMENTS])
-            r[iH] -= r.sum()   # Li, Be and rounding of the ejecta file
-            rows.append(r)
+            x0 = np.array([p2_x0[Zp].get(e, 0.0) for e in TRACKED_ELEMENTS])
+            r = np.array([d['yields'].get(e, 0.0) / Wp for e in TRACKED_ELEMENTS]) - x0
+            rows.append(np.concatenate([np.maximum(r, 0.0), np.where((r < 0) & (x0 > 0), -r / np.where(x0 > 0, x0, 1.0), 0.0),
+                                        np.maximum(-r, 0.0)]))
         rows = np.array(rows)
-        return np.array([np.interp(M, Ms, rows[:, k]) for k in range(N_ELEM)])
+        return np.array([np.interp(M, Ms, rows[:, k]) for k in range(3 * N_ELEM)])
 
     def boost_dx(Z, M):
         lz = np.log10(Z); lzs = np.log10([z for z, _ in bg])
@@ -3189,7 +3246,7 @@ def build_all(base_dir, output_file):
 
     # ── Build yield grid ──
     print("\nBuilding yield tables...", flush=True)
-    yields, wind_yields, rem_type, rem_mass, yield_src = build_yield_grid(Z_grid, M_grid, base_dir)
+    yields, wind_yields, rem_type, rem_mass, yield_src, sn_frac, m_bar, agb_P, agb_D = build_yield_grid(Z_grid, M_grid, base_dir)
 
     # ── Reclassify remnants using He/CO core masses from tracks ──
     print("  Reclassifying remnants with core masses...", flush=True)
@@ -3227,7 +3284,7 @@ def build_all(base_dir, output_file):
     # this wind net, so the SN (net_total - wind_yields) does not deliver the wind-phase production again.
     wind_dx, wind_w_p2 = build_wind_dx(Z_grid, M_grid, base_dir)
     wind_yields[:] = 0.0
-    n_wind_capped = 0; n_late = 0; late_max = 0.0
+    n_late = 0; late_max = 0.0; wind_resid = 0.0
     wind_total = np.zeros((N_Z, N_M))   # all wind mass, out at lifetime_yr
     surf_out = surface.astype(np.float64).copy()   # rewritten at alive ages with the composition used for the wind
     elem_ej_wind = np.zeros((N_Z, N_M, N_AGE, N_ELEM), dtype=np.float32)
@@ -3250,7 +3307,7 @@ def build_all(base_dir, output_file):
                     if j + 1 < N_AGE:
                         f_d = (np.log10(lifetime[iz, im]) - log_age_grid[j]) / (log_age_grid[j + 1] - log_age_grid[j])
                     if 1e-6 < f_d <= 1.0:
-                        dM[j + 1] += late   # leaves between the last alive grid age and death (anchored below)
+                        dM[j + 1] += late   # leaves between the last alive grid age and death (elem_ej_wind_total)
                     else:
                         dM[j] += late; f_d = 0.0
                     n_late += 1; late_max = max(late_max, late)
@@ -3262,11 +3319,16 @@ def build_all(base_dir, output_file):
                 continue
             if np.isfinite(wind_w_p2[iz, im]):
                 W = dM.sum()
-                net = wind_dx[iz, im] * W
-                cap = -X_init[iz] * W                     # an element cannot leave in the wind more than fully depleted
-                n_wind_capped += int((net < cap).any())
-                net = np.maximum(net, cap)
-                net[iH] -= net.sum()
+                # produced mass plus the source's destroyed fraction of this star's birth content: never below 0;
+                # the mass difference to the source's absolute composition change is H (fuel), recorded
+                P, D, A = wind_dx[iz, im, :N_ELEM], wind_dx[iz, im, N_ELEM:2 * N_ELEM], wind_dx[iz, im, 2 * N_ELEM:]
+                net = (P - D * X_init[iz]) * W
+                net[iH] = 0.0; net[iH] = -math.fsum(net)   # H (fuel) closes the mass
+                # recorded: H's offset from the source's own H change (destroyed fractions applied to this star's content)
+                src = np.delete(P - A, iH)
+                wind_resid = max(wind_resid, abs(net[iH] / W + math.fsum(src)))
+                if net[iH] < -X_init[iz, iH] * W:
+                    raise ValueError('wind H below 0 at Z=%g M=%g' % (Z_grid[iz], M_grid[im]))
                 Y = surface[iz, im, :, iHe].astype(np.float64)
                 s = np.maximum(0.0, Y - Y[ia[0]]) if ia.size else np.zeros(N_AGE)
                 if f_d > 0:
@@ -3284,16 +3346,12 @@ def build_all(base_dir, output_file):
             alive_idx = np.where(M_t > 0)[0]
             if alive_idx.size > 0:
                 last = alive_idx[-1] + (1 if f_d > 0 else 0)
-                cum[last+1:] = cum[last]
-                if f_d > 0:
-                    # GIZMO interpolates linearly in log age and clamps the age at lifetime_yr: the first grid age
-                    # after death holds the value that reaches the full wind exactly at death
-                    cum[last] = cum[last - 1] + (cum[last] - cum[last - 1]) / f_d
+                cum[last+1:] = cum[last]   # after death: all wind is out
             elem_ej_wind[iz, im, :, :] = cum.astype(np.float32)
             wind_total[iz, im] = elem_ej_wind[iz, im, -1, :].astype(np.float64).sum()
     w = wind_w_p2[np.isfinite(wind_w_p2)]
     print(f"  wind composition (M >= {WIND_DX_M_MIN}): PARSEC v2 {np.sum(w == 1)}, BoOST {np.sum(w == 0)}, "
-          f"blend {np.sum((w > 0) & (w < 1))} (Z, M) points; {n_wind_capped} with an element capped at full depletion")
+          f"blend {np.sum((w > 0) & (w < 1))} (Z, M) points; destroyed-fraction transfer to H max {wind_resid:.2e} of the wind")
     print(f"  wind lost after the last alive grid age, released between it and death: {n_late} (Z, M) points, max {late_max:.2f} Msun")
 
     # Redefine M_current = M_init − Σ_k cum_wind(t).  Preserve post-death
@@ -3304,13 +3362,6 @@ def build_all(base_dir, output_file):
     M_current   = np.where(old_zero, 0.0,
                            M_grid[None, :, None] - sum_cw_full)
     print(f"  Redefined M_current = M_init − Σ cum_wind (wind ledger now consistent)")
-    # v_wind at the first grid age after death repeats the last alive value: GIZMO interpolates up to lifetime_yr, so
-    # the wind leaving between the last alive grid age and death keeps the final speed (as the radiation bands do)
-    for iz in range(N_Z):
-        for im in range(N_M):
-            ia = np.where(M_current[iz, im] > 0)[0]
-            if ia.size and ia[-1] + 1 < N_AGE:
-                v_wind_arr[iz, im, ia[-1] + 1] = v_wind_arr[iz, im, ia[-1]]
 
     # ── M_preSN = M_init − all wind (out at lifetime_yr; the wind lost after the last alive grid age is not in
     # M_current there). Then Σ cum_wind(t_end) = M_init − M_preSN exactly. The yield-closure
@@ -3421,24 +3472,23 @@ def build_all(base_dir, output_file):
 
         # X_init: built with the wind composition above
 
-        closure = {'resid': 0.0, 'clip': 0.0, 'n_clip': 0, 'scale': 0.0, 'at': None}
-        def _absolute_ejecta(X_row, net_minus_wind, Mej, iH_idx, M_star):
-            """X Mej + net per element; a residual of sum(net) != 0 goes to H, negative elements are clipped to 0"""
+        # mass booked to H to close each star's ejecta, per source [Msun]; negative elements are an error, not clipped
+        resid = {'Karakas2010': 0.0, 'KL16': 0.0, 'Limongi25': 0.0}
+        n_p2_short = 0
+        transfer = {'Karakas2010': 0.0, 'KL16': 0.0, 'PARSEC2_SN': 0.0}   # destroyed-fraction transfer to H, max over ejecta
+        def _absolute_ejecta(X_row, net_minus_wind, Mej, iH_idx, src, where):
+            """X Mej + net per element; the residual sum(net) != 0 goes to H (recorded per source)"""
             if Mej <= 0:
                 return np.zeros_like(X_row)
-            raw = X_row * Mej + net_minus_wind
-            closure['resid'] = max(closure['resid'], abs(raw.sum() - Mej) / M_star)
-            if (raw < 0).any():
-                closure['n_clip'] += 1; closure['clip'] = max(closure['clip'], -raw[raw < 0].sum() / Mej)
-            ej = np.maximum(raw, 0.0)
-            ej[iH_idx] = max(0.0, ej[iH_idx] + (Mej - ej.sum()))
-            s = ej.sum()
-            if s > 0:
-                if abs(Mej / s - 1) > closure['scale']:
-                    closure['scale'], closure['at'] = abs(Mej / s - 1), (M_star, Mej)
-                ej *= Mej / s
+            ej = X_row * Mej + net_minus_wind
+            r = Mej - math.fsum(ej)
+            resid[src] = max(resid[src], abs(r))
+            ej[iH_idx] += r
+            if (ej < 0).any():
+                raise ValueError('negative ejecta at %s: %s' % (where, {TRACKED_ELEMENTS[k]: ej[k] for k in np.where(ej < 0)[0]}))
             return ej
 
+        kar_lo = 0.007   # K2010 below, KL16 from here up (with log-Z blending between them)
         elem_ej_SN  = np.zeros((N_Z, N_M, N_ELEM))
         elem_ej_AGB = np.zeros((N_Z, N_M, N_ELEM))
         for iz in range(N_Z):
@@ -3448,18 +3498,52 @@ def build_all(base_dir, output_file):
                 Mp = float(M_preSN[iz, im])
                 Mi = float(M_grid[im])
                 snw = yields[iz, im] - wind_yields[iz, im]
-                if rt in SN_TYPES:
+                where = (float(Z_grid[iz]), Mi)
+                if rt in SN_TYPES and np.isfinite(m_bar[iz, im]):
+                    # PARSEC v2: the raw explosive composition over M_preSN - M_bar, the gravitational-baryonic remnant
+                    # difference at birth composition
+                    # the track's pre-SN mass can fall below the model's M_bar (interpolated masses): then all ejecta
+                    # are explosive; nothing if the remnant takes the whole star
+                    mx = min(max(Mp - m_bar[iz, im], 0.0), max(Mp - rm, 0.0)); mb = max(Mp - rm, 0.0) - mx
+                    n_p2_short += Mp < m_bar[iz, im]
+                    P, D, A = sn_frac[iz, im, :N_ELEM], sn_frac[iz, im, N_ELEM:2 * N_ELEM], sn_frac[iz, im, 2 * N_ELEM:]
+                    # produced mass plus the model's destroyed fraction of this star's birth content; H (fuel) closes
+                    ej = X_init[iz] * (mx + mb) + (P - D * X_init[iz]) * mx
+                    ej[iH] = 0.0; ej[iH] = (Mp - rm) - math.fsum(ej)
+                    h_src = X_init[iz, iH] * (mx + mb) - math.fsum(np.delete(P - A, iH)) * mx
+                    transfer['PARSEC2_SN'] = max(transfer['PARSEC2_SN'], abs(ej[iH] - h_src) / max(Mp - rm, 1e-300))
+                    if (ej < 0).any():
+                        raise ValueError('negative PARSEC v2 SN ejecta at %s: %s' % (where, {TRACKED_ELEMENTS[k]: ej[k] for k in np.where(ej < 0)[0]}))
+                    elem_ej_SN[iz, im] = ej
+                elif rt in SN_TYPES:
                     Mej = Mp - rm
                     if Mej > 0:
-                        elem_ej_SN[iz, im] = _absolute_ejecta(X_init[iz], snw, Mej, iH, Mi)
+                        elem_ej_SN[iz, im] = _absolute_ejecta(X_init[iz], snw, Mej, iH, 'Limongi25', where)
                 elif rt == REM_WD:
                     Mej = Mp - rm
                     if Mej > 0 and Mi - rm > 0:   # Karakas lifetime budget (no winds below 8 Msun), scaled to Mej
-                        elem_ej_AGB[iz, im] = _absolute_ejecta(X_init[iz], yields[iz, im], Mi - rm, iH, Mi) * (Mej / (Mi - rm))
-        print(f"  SN/AGB closure: max |sum(X Mej + net) - Mej| / M_init = {closure['resid']:.2e} (to H); "
-              f"{closure['n_clip']} cells with negative elements clipped, max {closure['clip']:.2e} of Mej; "
-              f"max rescale |f - 1| = {closure['scale']:.2e} at (M, Mej) = {closure['at']}")
-        assert closure['scale'] < 0.05, 'SN/AGB closure would rescale every element (H exhausted)'
+                        src = 'Karakas2010' if Z_grid[iz] < kar_lo else 'KL16'
+                        Mk = Mi - rm
+                        add = X_init[iz] * Mk + yields[iz, im]
+                        ej = add.copy()
+                        # an element a model destroys: that fraction of this star's own birth content (an absolute
+                        # destroyed mass from another Z or mass can exceed it); the burned-fuel difference goes to H
+                        dep = agb_D[iz, im] > 0; dep[iH] = False
+                        ej[dep] = X_init[iz, dep] * Mk * (1.0 - agb_D[iz, im, dep]) + agb_P[iz, im, dep]
+                        tr = math.fsum(ej - add); ej[iH] -= tr
+                        transfer[src] = max(transfer[src], abs(tr) / Mk)
+                        r = Mk - math.fsum(ej); resid[src] = max(resid[src], abs(r)); ej[iH] += r
+                        if (ej < 0).any():
+                            raise ValueError('negative AGB ejecta at %s: %s' % (where, {TRACKED_ELEMENTS[k]: ej[k] for k in np.where(ej < 0)[0]}))
+                        elem_ej_AGB[iz, im] = ej * (Mej / Mk)
+        print('  closure residual booked to H, max per source [Msun]: ' + ', '.join('%s %.2e' % kv for kv in resid.items())
+              + '; PARSEC v2 SN with M_preSN < M_bar: %d' % n_p2_short)
+        for k, v in resid.items():
+            f.attrs['closure_residual_' + k] = np.float64(v)
+        for k, v in transfer.items():
+            f.attrs['depletion_transfer_to_H_' + k] = np.float64(v)
+        print('  destroyed-fraction transfer to H, max of the ejecta: ' + ', '.join('%s %.2e' % kv for kv in transfer.items()))
+        f.attrs['depletion_transfer_to_H_wind'] = np.float64(wind_resid)
 
         # SN, AGB, X_init go into the main table.
         ds = f.create_dataset('elem_ej_SN_mass', data=elem_ej_SN, **comp)
@@ -3496,6 +3580,12 @@ def build_all(base_dir, output_file):
                                      'M >= 8: x_wind = X_init + wind enrichment of PARSEC v2 wind ejecta (M >= 14) / '
                                      'BoOST surface (below), timed by the track surface He excess; M < 8: track surface. '
                                      'Sigma_k = M_init - M_current(age) within lifetime.')
+        dsw.attrs['usage'] = ('Ages up to the last grid age before death: the wind lost so far. Grid ages after death: '
+                              'all wind (= elem_ej_wind_total). Between the last grid age before death and lifetime_yr '
+                              'the rest leaves linearly in log age, reaching elem_ej_wind_total at lifetime_yr.')
+        dst = fw.create_dataset('elem_ej_wind_total', data=elem_ej_wind[:, :, -1, :], **comp)
+        dst.attrs['units'] = 'Msun, (N_Z, N_M, N_elements)'
+        dst.attrs['description'] = 'All wind ejecta per element over the life (ZAMS to lifetime_yr) = M_init - M_preSN in sum'
         fw.attrs['description'] = ('Per-element cumulative wind ejecta companion to '
                                     'stellar_tables_unified.hdf5. Split out for file size.')
     sz_w = os.path.getsize(wind_file) / 1e6
@@ -3520,18 +3610,15 @@ def build_all(base_dir, output_file):
                                            'FSN/DBH: yields=0 (failed SN, wind handled separately). '
                                            'CCSN/PPISN/PISN: PARSEC v2 net yields.')
 
-        # Type Ia yields (mass-independent, single yield vector)
-        ia_yields = get_type_ia_yields()
-        ia_arr = np.array([ia_yields[e] for e in TRACKED_ELEMENTS])
+        # Type Ia ejecta per Z
+        ia_arr = get_type_ia_yields(os.path.join(base_dir, 'gronow2021'), Z_grid)
         ds = f.create_dataset('type_ia_yields', data=ia_arr)
-        ds.attrs['units'] = 'Msun per event'
+        ds.attrs['units'] = 'Msun per event, (N_Z, N_elements)'
         ds.attrs['elements'] = TRACKED_ELEMENTS
-        ds.attrs['source'] = 'Iwamoto+ 1999, W7 model'
-        ds.attrs['note'] = ('Complete disruption of Chandrasekhar-mass C/O WD. '
-                            'Dropped-58Ni restored (Ni 0.0622 -> 0.1402000296) '
-                            'so the vector sums to 1.378 Msun = IA_EJECTA_MASS; '
-                            'original transcription summed to 1.30 '
-                            '— Uli decision 2026-07-28.')
+        ds.attrs['source'] = ('Gronow et al. 2021a (A&A 649, A155) and 2021b (A&A 656, A94), model %s (sub-Chandrasekhar '
+                              'double detonation), He-shell + core detonation, stable nuclides' % IA_MODEL)
+        ds.attrs['usage'] = ('composition per event, linear in log Z between 0.01, 0.1, 1, 3 Z_sun (clamped); GIZMO '
+                             'rescales it to the ejected mass')
 
         # type_ia_dtd and magnetar groups dropped: Type Ia DTD is hardcoded
         # in C (IA_RATE_PER_MSUN etc.), and magnetar channel is not wired up.
@@ -3551,7 +3638,7 @@ def build_all(base_dir, output_file):
                                     '+ Limongi+(2025) 8-14 Msun [arXiv:2505.22030 Table 2, all isotopes decayed; Z < Z_sun: '
                                     'isotopes x Chieffi & Limongi (2018) set R 13 Msun ratio; Z > Z_sun: solar net yields] '
                                     '+ PARSEC v2 total and wind ejecta >= 14 Msun (BoOST wind enrichment 8-14 Msun) '
-                                    '+ Iwamoto(1999) Type Ia')
+                                    '+ Gronow+(2021a,b) M10_03 Type Ia (Z dependent)')
         f.attrs['remnant_source'] = ('PARSEC v2 VMS (CCSN/FSN/PPISN/PISN/DBH) for M>=14; 8-14 Msun: NS of the '
                                      'Limongi+(2025) mass cut, M_init - sum(Table 2)')
         f.attrs['tracked_elements'] = TRACKED_ELEMENTS
@@ -3684,11 +3771,9 @@ def verify(output_file):
         # Type Ia check
         if 'type_ia_yields' in f:
             ia = f['type_ia_yields'][:]
-            print(f"\nType Ia yields (Msun/event): "
-                  f"Fe={ia[elems.index('Fe')]:.3f}, Si={ia[elems.index('Si')]:.3f}, "
-                  f"O={ia[elems.index('O')]:.3f}")
-            print(f"Type Ia DTD: rate={TYPE_IA_DTD['rate_per_Msun']:.1e}/Msun, "
-                  f"t_min={TYPE_IA_DTD['t_min_Myr']:.0f} Myr")
+            for iz in (0, int(np.argmin(abs(f['Z'][:] - Z_SOLAR))), len(ia) - 1):
+                print(f"\nType Ia yields (Msun/event) at Z={f['Z'][iz]:g}: sum={ia[iz].sum():.4f}, "
+                      f"Fe={ia[iz, elems.index('Fe')]:.3f}, Si={ia[iz, elems.index('Si')]:.3f}, O={ia[iz, elems.index('O')]:.3f}")
 
         # Z-dependence of BH mass
         print(f"\nBH mass vs Z for M~120 Msun:")

@@ -110,12 +110,14 @@ end-of-wind vs PARSEC v2, Na/Al, lifetime budget). `test_extended.py`: wind_grid
 ## 3. Yields: core-collapse SN, AGB, Type Ia
 
 **Sources now.**
-- CCSN, PPISN, PISN from 14 Msun: PARSEC v2 total minus wind ejecta (explosive part from LC03/CL04, Woosley 2017,
-  Heger & Woosley 2002, mapped by core mass).
-- 8-14 Msun: Limongi+2025 (2505.22030, solar), Z dependence as NuGrid net-yield difference.
+- CCSN, PPISN, PISN from 14 Msun: PARSEC v2 total minus wind ejecta of the same model (explosive part from LC03/CL04,
+  Woosley 2017, Heger & Woosley 2002, mapped by core mass).
+- 8-14 Msun: Limongi+2025 (2505.22030, solar) Table 2, all isotopes decayed; below Z_sun each isotope x its Chieffi &
+  Limongi 2018 13 Msun ratio.
 - AGB < 8 Msun: Karakas 2010 below Z = 0.007, Karakas & Lugaro 2016 above, linear in log Z.
-- Type Ia: W7 (Iwamoto+99), 1.378 Msun.
-- Net yields against each source's own initial composition. 26Al counted as Mg.
+- Type Ia: Gronow+2021a,b M10_03 (sub-Chandrasekhar double detonation), 0.01-3 Z_sun.
+- Net yields against each source's own initial composition; a destroyed element leaves as the source's destroyed
+  fraction of the star's birth content, H closes. 26Al counted as Mg.
 
 **Quality bar.**
 - Per-star total: wind + SN/AGB + remnant = M_init (2e-7).
@@ -124,16 +126,15 @@ end-of-wind vs PARSEC v2, Na/Al, lifetime budget). `test_extended.py`: wind_grid
 - K2010, KL16 and Limongi+25 values equal the raw files where the builder takes them unchanged.
 
 **Tests.** `test_invariants.py`: closure SN and AGB, FSN rules, test_elem_SN_nonneg. `test_yields_raw.py`: all seven.
-`test_wind_composition.py`: lifetime_budget_wind_plus_sn. `test_table_physics.py`: ia_yields_w7, imf_integrated_yields
-(factor-10 window: too loose, see below).
+`test_wind_composition.py`: lifetime_budget_wind_plus_sn. `test_table_physics.py`: imf_integrated_yields
+(factor-10 window: too loose, see below). `test_yield_ratios.py`: IMF element ratios, Limongi+25 vs the paper, seams.
 
 **Known gaps.**
 - **Z < 1e-4.** No AGB or 8-14 Msun yields there. PARSEC v2 has ejecta at 1e-6 and 1e-11 (>= 14 Msun only).
-- **8-14 Msun away from solar Z.** Limongi+25 is solar only. The Z dependence is borrowed from NuGrid.
+- **8-14 Msun away from solar Z.** Limongi+25 is solar only. The Z dependence is Chieffi & Limongi 2018's 13 Msun.
 - **Super-AGB, 8-9 Msun.** Not covered by any source we use.
-- **Type Ia delay times.** The table holds only W7 yields. The delay-time distribution (t^-1 from 40 Myr,
-  1.3e-3 per Msun) lives in GIZMO (`resolvedism_fb_shared.h`) and in a builder dict that GIZMO does not read. Two
-  places for one number. No Z dependence of Ia yields.
+- **Type Ia delay times.** The table holds only yields (one model, Gronow+21 M10_03). The delay-time distribution
+  (t^-1 from 40 Myr, 1.3e-3 per Msun) lives in GIZMO (`resolvedism_fb_shared.h`). No near-Chandrasekhar channel.
 - **26Al.** Folded into Mg at once. Fine for Mg after 1 Myr. Lost as a tracer: no 26Al for gamma-ray maps or
   radiogenic heating, and KL16 gives only elemental Al, so its 26Al cannot be split out.
 - **IMF-integrated check** accepts a factor 10. It should compare with published IMF yields to about 30%.
