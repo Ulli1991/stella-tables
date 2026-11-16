@@ -27,6 +27,7 @@ def main():
         ('stellar: extended', [py, os.path.join(HERE, 'stellar', 'test_extended.py'), b]),
         ('stellar: wind composition', [py, os.path.join(HERE, 'stellar', 'test_wind_composition.py'), b]),
         ('stellar: yields vs raw files', [py, os.path.join(HERE, 'stellar', 'test_yields_raw.py'), b]),
+        ('stellar: yield ratios, seams', [py, os.path.join(HERE, 'stellar', 'test_yield_ratios.py'), b]),
         ('stellar: radiation', [py, os.path.join(HERE, 'stellar', 'test_radiation.py'), b]),
         ('stellar: solar composition', [py, os.path.join(HERE, 'stellar', 'test_solar.py'), b] + (['--gizmo', a.gizmo] if a.gizmo else [])),
         ('chemistry: tables', [py, os.path.join(HERE, 'chemistry', 'test_chemistry.py'), b]),

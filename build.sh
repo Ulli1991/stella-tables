@@ -22,7 +22,7 @@ if [ "${1:-}" = "--raw" ]; then
 else
     for t in "$HERE"/stellar/data/reduced/*.tar.xz; do tar -C "$ROOT" -xJf "$t"; done
 fi
-for y in chieffi_limongi2018 karakas2010 karakas_lugaro2016 nugrid; do ln -sfn "$HERE/stellar/data/yields/$y" "$ROOT/$y"; done
+for y in chieffi_limongi2018 karakas2010 karakas_lugaro2016 limongi2025 nugrid; do ln -sfn "$HERE/stellar/data/yields/$y" "$ROOT/$y"; done
 
 echo "== stellar tables"
 RAD=(--radiation-source "${STELLA_RADIATION_SOURCE:-hotstar_stack}")

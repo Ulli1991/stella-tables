@@ -7,7 +7,8 @@
 - surface composition at the first alive age = birth composition X_init, every element, every (Z, M)
 - AGB: Karakas 2010 Z = 1e-4, 6 Msun is the VW93 model alone; KL16 elements that AGB stars do not process leave at
   their birth fraction
-- 8-14 Msun at Z = 0.014: wind + SN = X_init (M - rem) + Limongi+2025 net yield (total - X Mej) per Limongi element
+- M >= 8: the wind out by the last alive grid age is the raw track's mass loss up to then (late wind not early)
+(8-14 Msun against Limongi+2025: test_yield_ratios.py)
 """
 import os, re, sys
 from glob import glob
@@ -113,24 +114,35 @@ def kl16_unprocessed_elements_follow_raw(t, w, root):
 
 
 @test
-def limongi_lifetime_budget_solar(t, w, root):
-    import build_stellar_tables as B
-    ms, rems, tab = B.get_limongi25_yields()
-    x0 = B._parse_parsec2_init_comp(os.path.join(root, 'parsec2_vms'))[0.014]
-    Zt, Mt = t['Z'][()], t['M_init'][()]
-    iz = int(np.argmin(abs(Zt - 0.014)))
-    cw, SN, X, rm = w['elem_ej_wind_cumulative'], t['elem_ej_SN_mass'][()], t['X_init'][()], t['remnant_mass'][()]
-    worst = (0., None)
-    for M in (11., 12.):
-        im = int(np.where(Mt == M)[0][0]); mej = M - np.interp(M, ms, rems)
-        for e, ys in tab.items():
-            if e == 'H': continue        # H takes the sum of all net yields (mass closure, tested in test_invariants)
-            k = ELEMS.index(e)
-            want = np.interp(M, ms, ys) - x0[e] * mej
-            have = float(cw[iz, im, -1, k]) + SN[iz, im, k] - X[iz, k] * (M - rm[iz, im])
-            err = abs(have - want) / (1e-3 * X[iz, k] * M + 1e-3 * abs(want) + 1e-9)
-            if err > worst[0]: worst = (err, (M, e, have, want))
-    return worst[0] < 1, 'Limongi elements except H at 11, 12 Msun: worst |dnet|/tol = %.2g at (M, elem, table, raw) = %s' % worst
+def late_wind_follows_raw_track(t, w, root):
+    """M >= 8 at PARSEC v2 grid tracks: the wind out by the last alive grid age is the raw track's mass loss up to then
+    (wind lost later leaves between that age and death, not before); tolerance 2e-3 M_init"""
+    Zt, Mt, la, tp, Mp = t['Z'][()], t['M_init'][()], t['log_age_yr'][()], t['t_PMS'][()], t['M_preSN'][()]
+    Mc, cw = t['M_current'], w['elem_ej_wind_cumulative']
+    worst, n, early = (0., None), 0, 0
+    for d in glob(os.path.join(root, 'parsec2_vms', 'tracks_Z*')):
+        Zp = float(re.search(r'tracks_Z([\d.Ee-]+)', d).group(1))
+        iz = np.where(np.isclose(Zt, Zp, rtol=1e-9))[0]
+        if not iz.size: continue
+        iz = iz[0]
+        for f in glob(os.path.join(d, '*.TAB')):
+            M = float(re.search(r'_M([\d.]+)\.TAB$', f).group(1))
+            im = np.where(Mt == M)[0]
+            if M < 8 or not im.size or os.path.getsize(f) == 0: continue
+            im = im[0]
+            lines = open(f).read().splitlines(); names = lines[2].split()
+            rows = np.array([[float(x) for x in l.split()] for l in lines[3:] if len(l.split()) == len(names)])
+            if len(rows) < 50: continue
+            age, mass = rows[:, names.index('AGE')], rows[:, names.index('MASS')]
+            ia = np.where(Mc[iz, im] > 0)[0]
+            if not ia.size: continue
+            out = float(cw[iz, im, ia[-1], :].astype(np.float64).sum())
+            lost_raw = M - float(np.interp(10 ** la[ia[-1]] + tp[iz, im], age, mass))
+            e = (out - lost_raw) / M; n += 1
+            early += e > 2e-3
+            if abs(e) > abs(worst[0]): worst = (e, (Zp, M, out, lost_raw, M - Mp[iz, im]))
+    return n > 0 and abs(worst[0]) < 2e-3, ('%d tracks, %d release wind early; worst (out - raw)/M_init = %+.2e at '
+                                            '(Z, M, out by last alive age, raw lost by then, total wind) = %s' % (n, early, worst[0], worst[1]))
 
 
 @test

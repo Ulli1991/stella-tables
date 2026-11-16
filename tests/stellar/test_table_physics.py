@@ -7,7 +7,7 @@
 Complements test_invariants.py (mass/wind closure); this file covers what the
 consumer (GIZMO resolvedism_stellar_tables.cc) and the physics rely on.
 """
-import argparse, os, sys
+import argparse, collections, os, sys
 import numpy as np, h5py
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -163,6 +163,23 @@ def imf_integrated_yields(t):
     net = ej - np.outer(ej.sum(1), xin)          # net = ejected minus initial composition
     yZ = np.sum(w[:, None] * net[:, 2:]); yFe = np.sum(w * net[:, ELEMS.index('Fe')])
     return 0.008 < yZ < 0.03 and 3e-4 < yFe < 1.5e-3, f'y_Z={yZ:.4f} y_Fe={yFe:.2e} per Msun formed'
+
+@test
+def phase_transitions_ordered(t):
+    """reached phases (time > 0) in evolutionary order MS_end <= RGB <= CHeB <= AGB_start <= AGB_end <= postAGB_start
+    <= lifetime (each pair where both are reached); WR_start <= lifetime (WR can start on the main sequence)"""
+    order = ['t_MS_end', 't_RGB_start', 't_CHeB_start', 't_AGB_start', 't_AGB_end', 't_postAGB_start']
+    T = {k: t['phase_transitions/' + k] for k in order + ['t_WR_start']}
+    T['lifetime'] = t['lifetime_yr']
+    pairs = [(a, b) for i, a in enumerate(order + ['lifetime']) for b in (order + ['lifetime'])[i + 1:]]
+    pairs.append(('t_WR_start', 'lifetime'))
+    bad = collections.Counter(); ex = []
+    for lo, hi in pairs:
+        m = (T[lo] > 0) & (T[hi] > 0) & (T[lo] > T[hi] * (1 + 1e-9))
+        if m.any():
+            bad[f'{lo}>{hi}'] += int(m.sum())
+            iz, im = np.argwhere(m)[0]; ex.append((lo, hi, float(t.Z[iz]), float(t.M[im]), T[lo][iz, im], T[hi][iz, im]))
+    return not bad, f'out of order: {dict(bad)}; first per pair: {ex[:4]}'
 
 @test
 def provenance_attrs(t):

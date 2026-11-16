@@ -1,0 +1,13 @@
+Limongi, Chieffi & Roberti 2025, ApJS (arXiv:2505.22030): 9.22-15 Msun, solar metallicity, non-rotating.
+
+tabyields.tex    Table 2, "Ejected Masses at 2.5e4 s": isotopic ejecta (wind + explosion, 1H to 209Bi) of the
+                 9.22, 10, 11, 12, 13, 15 Msun models; mass cut set by the Burrows+24 initial mass - 56Ni relation.
+                 Unstable species are not yet decayed (56Ni, 57Ni, 26Al, 60Fe, ...).
+tabmainprop.tex  Table 1, main properties (pre-SN total mass, Fe-core mass, ...).
+
+Both files are verbatim from the arXiv e-print source of 2505.22030 (downloaded 2026-11-16,
+e-print sha256 2d1ee08dcdb4df6c201e631bbebd77a19591eb6775dc7a44d3d357a8d234d01d). ms.tex includes tabyields.tex
+(Table 2); the alternative tabyieldsNI007.tex (56Ni = 0.07 Msun cut) in the same source is not used by the paper.
+sha256: tabyields.tex e3c35ca67417a7c5d746d19d787202d9ec96a447f430588ce0fd28584396551a
+        tabmainprop.tex 048c8c03ff154bc6fc9b910de6a5cf0788a628616d4a33b97dd1b3c37ac6b174
+Table 2 sums to M_init - M_cut with M_cut = 1.32-1.56 Msun > M_Fe (Table 1): the ejecta include the wind.

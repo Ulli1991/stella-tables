@@ -155,9 +155,19 @@ class StellarTable:
         return self._trilinear(self.M_current, lm, lz, la)
 
     def cum_wind_per_elem(self, lm, lz, la, k):
+        """as GIZMO's stellar_elem_ej_wind_cumulative: each (Z, M) corner's age is clamped at its own lifetime_yr"""
         if self.cum_wind is None:
             return 0.0
-        return self._trilinear(self.cum_wind[:, :, :, k], lm, lz, la)
+        im, iz, fm, fz = self._bl_factors(lm, lz)
+        out = 0.0
+        for jz, wz in ((iz, 1 - fz), (iz + 1, fz)):
+            for jm, wm in ((im, 1 - fm), (im + 1, fm)):
+                lt = self.lifetime[jz, jm]
+                lac = np.log10(lt) if (lt > 0 and 10.0 ** la > lt) else la
+                ia = int(np.clip(np.searchsorted(self.log_age, lac) - 1, 0, self.NAGE - 2))
+                fa = min(1.0, max(0.0, (lac - self.log_age[ia]) / (self.log_age[ia + 1] - self.log_age[ia])))
+                out += wz * wm * (self.cum_wind[jz, jm, ia, k] * (1 - fa) + self.cum_wind[jz, jm, ia + 1, k] * fa)
+        return out
 
     def cum_wind_total(self, lm, lz, la):
         if self.cum_wind is None:
